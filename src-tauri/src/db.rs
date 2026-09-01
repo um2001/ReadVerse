@@ -12,6 +12,8 @@ pub struct Book {
     pub encoding: String,
     pub char_count: i64,
     pub created_at: String,
+    pub format: String,
+    pub cover_path: String,
     pub missing: bool,
     pub last_char_offset: i64,
     pub font_size: i64,
@@ -23,6 +25,7 @@ pub struct ReadingProgress {
     pub book_id: i64,
     pub char_offset: i64,
     pub font_size: i64,
+    pub encoding: String,
     pub updated_at: String,
 }
 
@@ -109,6 +112,17 @@ pub fn open(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|err| err.to_string())?;
     }
+    if version < 2 {
+        conn.execute_batch(
+            "
+            ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'txt';
+            ALTER TABLE books ADD COLUMN cover_path TEXT NOT NULL DEFAULT '';
+            ALTER TABLE reading_progress ADD COLUMN encoding TEXT NOT NULL DEFAULT 'auto';
+            PRAGMA user_version = 2;
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    }
     Ok(conn)
 }
 
@@ -119,11 +133,21 @@ pub fn insert_book(
     file_size: i64,
     encoding: &str,
     char_count: i64,
+    format: &str,
+    cover_path: &str,
 ) -> Result<Book, String> {
     conn.execute(
-        "INSERT INTO books (title, file_path, file_size, encoding, char_count)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![title, file_path.to_string_lossy(), file_size, encoding, char_count],
+        "INSERT INTO books (title, file_path, file_size, encoding, char_count, format, cover_path)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            title,
+            file_path.to_string_lossy(),
+            file_size,
+            encoding,
+            char_count,
+            format,
+            cover_path
+        ],
     )
     .map_err(|err| err.to_string())?;
     book_by_id(conn, conn.last_insert_rowid())?
@@ -132,8 +156,10 @@ pub fn insert_book(
 
 pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<Book>, String> {
     conn.query_row(
-        "SELECT b.id, b.title, b.file_path, b.file_size, b.encoding, b.char_count,
-                b.created_at, COALESCE(p.char_offset, 0), COALESCE(p.font_size, 18),
+        "SELECT b.id, b.title, b.file_path, b.file_size,
+                COALESCE(NULLIF(NULLIF(p.encoding, ''), 'auto'), b.encoding),
+                b.char_count, b.created_at, b.format, b.cover_path,
+                COALESCE(p.char_offset, 0), COALESCE(p.font_size, 18),
                 COALESCE(p.updated_at, '')
          FROM books b
          LEFT JOIN reading_progress p ON p.book_id = b.id
@@ -148,8 +174,10 @@ pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<Book>, String> {
 pub fn list_books(conn: &Connection) -> Result<Vec<Book>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT b.id, b.title, b.file_path, b.file_size, b.encoding, b.char_count,
-                    b.created_at, COALESCE(p.char_offset, 0), COALESCE(p.font_size, 18),
+            "SELECT b.id, b.title, b.file_path, b.file_size,
+                    COALESCE(NULLIF(NULLIF(p.encoding, ''), 'auto'), b.encoding),
+                    b.char_count, b.created_at, b.format, b.cover_path,
+                    COALESCE(p.char_offset, 0), COALESCE(p.font_size, 18),
                     COALESCE(p.updated_at, '')
              FROM books b
              LEFT JOIN reading_progress p ON p.book_id = b.id
@@ -181,7 +209,7 @@ pub fn delete_book(conn: &Connection, id: i64) -> Result<Option<String>, String>
 pub fn get_progress(conn: &Connection, book_id: i64) -> Result<ReadingProgress, String> {
     let progress = conn
         .query_row(
-            "SELECT book_id, char_offset, font_size, updated_at
+            "SELECT book_id, char_offset, font_size, encoding, updated_at
              FROM reading_progress WHERE book_id = ?1",
             params![book_id],
             |row| {
@@ -189,7 +217,8 @@ pub fn get_progress(conn: &Connection, book_id: i64) -> Result<ReadingProgress, 
                     book_id: row.get(0)?,
                     char_offset: row.get(1)?,
                     font_size: row.get(2)?,
-                    updated_at: row.get(3)?,
+                    encoding: row.get(3)?,
+                    updated_at: row.get(4)?,
                 })
             },
         )
@@ -199,6 +228,7 @@ pub fn get_progress(conn: &Connection, book_id: i64) -> Result<ReadingProgress, 
         book_id,
         char_offset: 0,
         font_size: 18,
+        encoding: "auto".to_string(),
         updated_at: String::new(),
     }))
 }
@@ -384,15 +414,17 @@ pub fn save_progress(
     book_id: i64,
     char_offset: i64,
     font_size: i64,
+    encoding: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO reading_progress (book_id, char_offset, font_size)
-         VALUES (?1, ?2, ?3)
+        "INSERT INTO reading_progress (book_id, char_offset, font_size, encoding)
+         VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(book_id) DO UPDATE SET
             char_offset = excluded.char_offset,
             font_size = excluded.font_size,
+            encoding = excluded.encoding,
             updated_at = datetime('now')",
-        params![book_id, char_offset, font_size],
+        params![book_id, char_offset, font_size, encoding],
     )
     .map_err(|err| err.to_string())?;
     Ok(())
@@ -408,10 +440,12 @@ fn book_from_row(row: &Row<'_>) -> rusqlite::Result<Book> {
         encoding: row.get(4)?,
         char_count: row.get(5)?,
         created_at: row.get(6)?,
+        format: row.get(7)?,
+        cover_path: row.get(8)?,
         missing: !Path::new(&file_path).is_file(),
-        last_char_offset: row.get(7)?,
-        font_size: row.get(8)?,
-        last_read_at: row.get(9)?,
+        last_char_offset: row.get(9)?,
+        font_size: row.get(10)?,
+        last_read_at: row.get(11)?,
     })
 }
 
@@ -431,16 +465,19 @@ mod tests {
             1024,
             "GBK",
             120,
+            "txt",
+            "",
         )
         .unwrap();
 
         assert!(book.id > 0);
         assert_eq!(list_books(&conn).unwrap().len(), 1);
 
-        save_progress(&conn, book.id, 42, 20).unwrap();
+        save_progress(&conn, book.id, 42, 20, "GBK").unwrap();
         let progress = get_progress(&conn, book.id).unwrap();
         assert_eq!(progress.char_offset, 42);
         assert_eq!(progress.font_size, 20);
+        assert_eq!(progress.encoding, "GBK");
 
         delete_book(&conn, book.id).unwrap();
         assert!(book_by_id(&conn, book.id).unwrap().is_none());
@@ -458,6 +495,8 @@ mod tests {
             1024,
             "UTF-8",
             120,
+            "txt",
+            "",
         )
         .unwrap();
 

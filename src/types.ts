@@ -6,6 +6,8 @@ export interface Book {
   encoding: string;
   char_count: number;
   created_at: string;
+  format: string;
+  cover_path: string;
   missing: boolean;
   last_char_offset: number;
   font_size: number;
@@ -16,6 +18,7 @@ export interface ReadingProgress {
   book_id: number;
   char_offset: number;
   font_size: number;
+  encoding: string;
   updated_at: string;
 }
 

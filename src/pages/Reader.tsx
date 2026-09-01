@@ -55,6 +55,7 @@ type PanelKind = "chapters" | "bookmarks" | "search" | "settings" | null;
 
 export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps) {
   const [fontSize, setFontSize] = useState(18);
+  const [encoding, setEncoding] = useState("auto");
   const [pageText, setPageText] = useState("");
   const [currentOffset, setCurrentOffset] = useState(0);
   const [nextOffset, setNextOffset] = useState(0);
@@ -74,6 +75,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
 
   const offsetRef = useRef(0);
   const fontSizeRef = useRef(18);
+  const encodingRef = useRef("auto");
   const pageNumberRef = useRef(1);
   const stackRef = useRef<number[]>([]);
   const cacheRef = useRef(new Map<number, PageCacheEntry>());
@@ -81,7 +83,8 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
   const busyRef = useRef(false);
 
   const loadPage = useCallback(
-    async (offset: number): Promise<PageResult> => {
+    async (offset: number, encodingOverride?: string): Promise<PageResult> => {
+      const activeEncoding = encodingOverride ?? encodingRef.current;
       const cached = cacheRef.current.get(offset);
       const page = cached
         ? {
@@ -90,7 +93,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
             next_offset: cached.nextOffset,
             eof: cached.eof,
           }
-        : await readPage(book.id, offset);
+        : await readPage(book.id, offset, activeEncoding);
 
       if (!cached) {
         if (cacheRef.current.size >= 80) {
@@ -136,8 +139,10 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
             : progress.char_offset;
         fontSizeRef.current = progress.font_size;
         setFontSize(progress.font_size);
+        encodingRef.current = progress.encoding || "auto";
+        setEncoding(encodingRef.current);
         await loadPage(start);
-        const number = await getPageNumber(book.id, start).catch(() => 1);
+        const number = await getPageNumber(book.id, start, encodingRef.current).catch(() => 1);
         if (!cancelled) {
           pageNumberRef.current = number;
           setPageNumber(number);
@@ -157,14 +162,21 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
   useEffect(() => {
     return () => {
       if (loadedRef.current) {
-        void saveProgress(book.id, offsetRef.current, fontSizeRef.current);
+        void saveProgress(
+          book.id,
+          offsetRef.current,
+          fontSizeRef.current,
+          encodingRef.current,
+        );
       }
     };
   }, [book.id]);
 
   const persist = useCallback(
     (offset: number, size: number) => {
-      void saveProgress(book.id, offset, size).catch(() => undefined);
+      void saveProgress(book.id, offset, size, encodingRef.current).catch(
+        () => undefined,
+      );
     },
     [book.id],
   );
@@ -202,7 +214,11 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
       }
       if (offsetRef.current === 0) return;
 
-      const page = await readPreviousPage(book.id, offsetRef.current);
+      const page = await readPreviousPage(
+        book.id,
+        offsetRef.current,
+        encodingRef.current,
+      );
       if (page.text.length === 0) return;
       const start = page.start_offset;
       cacheRef.current.set(start, {
@@ -238,7 +254,11 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
         stackRef.current = [];
         setPageStack([]);
         await loadPage(offset);
-        const number = await getPageNumber(book.id, offset).catch(() => 1);
+        const number = await getPageNumber(
+          book.id,
+          offset,
+          encodingRef.current,
+        ).catch(() => 1);
         pageNumberRef.current = number;
         setPageNumber(number);
         persist(offsetRef.current, fontSizeRef.current);
@@ -256,6 +276,20 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
     fontSizeRef.current = next;
     setFontSize(next);
     persist(offsetRef.current, next);
+  }
+
+  function changeEncoding(value: string) {
+    encodingRef.current = value;
+    setEncoding(value);
+    cacheRef.current.clear();
+    void loadPage(offsetRef.current, value)
+      .then(() => getPageNumber(book.id, offsetRef.current, value))
+      .then((number) => {
+        pageNumberRef.current = number;
+        setPageNumber(number);
+        persist(offsetRef.current, fontSizeRef.current);
+      })
+      .catch((err) => setError(String(err)));
   }
 
   useEffect(() => {
@@ -389,6 +423,20 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
             </p>
           </div>
           <div className="ml-auto flex items-center gap-1">
+            {book.format !== "epub" && (
+              <select
+                value={encoding}
+                onChange={(event) => changeEncoding(event.target.value)}
+                aria-label="编码"
+                title="编码"
+                className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 text-xs text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none"
+              >
+                <option value="auto">自动</option>
+                <option value="UTF-8">UTF-8</option>
+                <option value="GBK">GBK</option>
+                <option value="GB2312">GB2312</option>
+              </select>
+            )}
             <button
               type="button"
               onClick={() => void toggleBookmark()}

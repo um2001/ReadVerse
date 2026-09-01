@@ -168,6 +168,8 @@ pub fn import_file(
         metadata.len() as i64,
         encoding.name(),
         char_count as i64,
+        "txt",
+        "",
     )
     .inspect_err(|_| {
         let _ = fs::remove_file(&destination);

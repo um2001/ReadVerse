@@ -12,6 +12,8 @@ const book: Book = {
   encoding: "UTF-8",
   char_count: 200,
   created_at: "2026-09-01 10:00:00",
+  format: "txt",
+  cover_path: "",
   missing: false,
   last_char_offset: 12,
   font_size: 20,
@@ -64,6 +66,7 @@ describe("Reader", () => {
       book_id: book.id,
       char_offset: 12,
       font_size: 20,
+      encoding: "auto",
       updated_at: "2026-09-01 10:00:00",
     });
     vi.mocked(readPage).mockImplementation(async (_bookId, offset) => pages[offset]);
@@ -93,15 +96,15 @@ describe("Reader", () => {
     );
 
     expect(await screen.findByText("第一页内容")).toBeInTheDocument();
-    expect(readPage).toHaveBeenCalledWith(book.id, 12);
+    expect(readPage).toHaveBeenCalledWith(book.id, 12, "auto");
     expect(screen.getByText(/已读 6%/)).toBeInTheDocument();
 
     await userEvent.setup().click(screen.getByRole("button", { name: /下一页/ }));
     expect(await screen.findByText("第二页内容")).toBeInTheDocument();
-    expect(readPage).toHaveBeenCalledWith(book.id, 40);
+    expect(readPage).toHaveBeenCalledWith(book.id, 40, "auto");
 
     await waitFor(() =>
-      expect(saveProgress).toHaveBeenCalledWith(book.id, 40, 20),
+      expect(saveProgress).toHaveBeenCalledWith(book.id, 40, 20, "auto"),
     );
   });
 
@@ -118,7 +121,7 @@ describe("Reader", () => {
 
     await userEvent.setup().click(screen.getByTitle("增大字号"));
     expect(screen.getByText("21")).toBeInTheDocument();
-    expect(saveProgress).toHaveBeenCalledWith(book.id, 12, 21);
+    expect(saveProgress).toHaveBeenCalledWith(book.id, 12, 21, "auto");
   });
 
   it("can go back to earlier content after restoring progress", async () => {
@@ -126,6 +129,7 @@ describe("Reader", () => {
       book_id: book.id,
       char_offset: 40,
       font_size: 20,
+      encoding: "auto",
       updated_at: "2026-09-01 10:00:00",
     });
     vi.mocked(getPageNumber).mockResolvedValue(2);
@@ -145,10 +149,10 @@ describe("Reader", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: /上一页/ }));
     expect(await screen.findByText("第一页内容")).toBeInTheDocument();
     expect(screen.getByText(/第 1 页/)).toBeInTheDocument();
-    expect(readPreviousPage).toHaveBeenCalledWith(book.id, 40);
+    expect(readPreviousPage).toHaveBeenCalledWith(book.id, 40, "auto");
 
     await waitFor(() =>
-      expect(saveProgress).toHaveBeenCalledWith(book.id, 12, 20),
+      expect(saveProgress).toHaveBeenCalledWith(book.id, 12, 20, "auto"),
     );
   });
 
@@ -171,6 +175,27 @@ describe("Reader", () => {
     await userEvent.setup().click(screen.getByTitle("目录"));
     await userEvent.setup().click(screen.getByText("第二章"));
 
-    expect(readPage).toHaveBeenCalledWith(book.id, 80);
+    expect(readPage).toHaveBeenCalledWith(book.id, 80, "auto");
+  });
+
+  it("switches encoding and reloads the current page", async () => {
+    render(
+      <Reader
+        book={book}
+        settings={{ theme: "light", font_family: "默认", line_height: "1.8" }}
+        onSettingsChange={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    await screen.findByText("第一页内容");
+
+    await userEvent
+      .setup()
+      .selectOptions(screen.getByLabelText("编码"), "GBK");
+
+    expect(readPage).toHaveBeenCalledWith(book.id, 12, "GBK");
+    await waitFor(() =>
+      expect(saveProgress).toHaveBeenCalledWith(book.id, 12, 20, "GBK"),
+    );
   });
 });

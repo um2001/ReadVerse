@@ -43,7 +43,7 @@ pub fn delete_book(state: State<'_, AppState>, book_id: i64) -> Result<(), Strin
     };
     {
         let mut readers = state.readers.lock().map_err(|err| err.to_string())?;
-        readers.remove(&book_id);
+        readers.retain(|(cached_book_id, _), _| *cached_book_id != book_id);
     }
     if let Some(file_path) = file_path {
         let _ = fs::remove_file(file_path);
@@ -88,9 +88,31 @@ pub fn save_progress(
     book_id: i64,
     char_offset: i64,
     font_size: i64,
+    encoding: String,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|err| err.to_string())?;
-    db::save_progress(&conn, book_id, char_offset, font_size)
+    db::save_progress(&conn, book_id, char_offset, font_size, &encoding)
+}
+
+fn resolve_encoding(
+    book: &db::Book,
+    requested: Option<&str>,
+) -> Result<(&'static encoding_rs::Encoding, String), String> {
+    let name = requested
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("auto")
+        .to_string();
+    let encoding = if name == "auto" {
+        match crate::import::detect_encoding_from_file(Path::new(&book.file_path)) {
+            Ok(encoding) => encoding,
+            Err(_) => encoding_rs::UTF_8,
+        }
+    } else {
+        encoding_rs::Encoding::for_label(name.as_bytes())
+            .ok_or_else(|| format!("不支持的编码：{name}"))?
+    };
+    Ok((encoding, name))
 }
 
 #[tauri::command]
@@ -98,21 +120,22 @@ pub fn read_page(
     state: State<'_, AppState>,
     book_id: i64,
     offset: usize,
+    encoding: Option<String>,
 ) -> Result<reader::Page, String> {
     let book = {
         let conn = state.db.lock().map_err(|err| err.to_string())?;
         db::book_by_id(&conn, book_id)?
             .ok_or_else(|| "书籍不存在".to_string())?
     };
+    let (encoding, encoding_name) = resolve_encoding(&book, encoding.as_deref())?;
+    let key = (book_id, encoding_name);
     let mut readers = state.readers.lock().map_err(|err| err.to_string())?;
-    if !readers.contains_key(&book_id) {
-        let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
-            .unwrap_or(encoding_rs::UTF_8);
+    if !readers.contains_key(&key) {
         let reader = Reader::open(Path::new(&book.file_path), encoding)?;
-        readers.insert(book_id, Arc::new(Mutex::new(reader)));
+        readers.insert(key.clone(), Arc::new(Mutex::new(reader)));
     }
     let reader = readers
-        .get(&book_id)
+        .get(&key)
         .ok_or_else(|| "阅读器初始化失败".to_string())?;
     let mut reader = reader.lock().map_err(|err| err.to_string())?;
     reader.read_page(offset, reader::DEFAULT_PAGE_CHARS)
@@ -123,21 +146,22 @@ pub fn read_previous_page(
     state: State<'_, AppState>,
     book_id: i64,
     offset: usize,
+    encoding: Option<String>,
 ) -> Result<reader::Page, String> {
     let book = {
         let conn = state.db.lock().map_err(|err| err.to_string())?;
         db::book_by_id(&conn, book_id)?
             .ok_or_else(|| "书籍不存在".to_string())?
     };
+    let (encoding, encoding_name) = resolve_encoding(&book, encoding.as_deref())?;
+    let key = (book_id, encoding_name);
     let mut readers = state.readers.lock().map_err(|err| err.to_string())?;
-    if !readers.contains_key(&book_id) {
-        let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
-            .unwrap_or(encoding_rs::UTF_8);
+    if !readers.contains_key(&key) {
         let reader = Reader::open(Path::new(&book.file_path), encoding)?;
-        readers.insert(book_id, Arc::new(Mutex::new(reader)));
+        readers.insert(key.clone(), Arc::new(Mutex::new(reader)));
     }
     let reader = readers
-        .get(&book_id)
+        .get(&key)
         .ok_or_else(|| "阅读器初始化失败".to_string())?;
     let mut reader = reader.lock().map_err(|err| err.to_string())?;
     reader.previous_page(offset, reader::DEFAULT_PAGE_CHARS)
@@ -148,21 +172,22 @@ pub fn get_page_number(
     state: State<'_, AppState>,
     book_id: i64,
     offset: usize,
+    encoding: Option<String>,
 ) -> Result<usize, String> {
     let book = {
         let conn = state.db.lock().map_err(|err| err.to_string())?;
         db::book_by_id(&conn, book_id)?
             .ok_or_else(|| "书籍不存在".to_string())?
     };
+    let (encoding, encoding_name) = resolve_encoding(&book, encoding.as_deref())?;
+    let key = (book_id, encoding_name);
     let mut readers = state.readers.lock().map_err(|err| err.to_string())?;
-    if !readers.contains_key(&book_id) {
-        let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
-            .unwrap_or(encoding_rs::UTF_8);
+    if !readers.contains_key(&key) {
         let reader = Reader::open(Path::new(&book.file_path), encoding)?;
-        readers.insert(book_id, Arc::new(Mutex::new(reader)));
+        readers.insert(key.clone(), Arc::new(Mutex::new(reader)));
     }
     let reader = readers
-        .get(&book_id)
+        .get(&key)
         .ok_or_else(|| "阅读器初始化失败".to_string())?;
     let mut reader = reader.lock().map_err(|err| err.to_string())?;
     reader.page_number_at(offset, reader::DEFAULT_PAGE_CHARS)
@@ -172,8 +197,7 @@ fn ensure_chapters(conn: &Connection, book: &db::Book) -> Result<(), String> {
     if !db::list_chapters(conn, book.id)?.is_empty() {
         return Ok(());
     }
-    let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
-        .unwrap_or(encoding_rs::UTF_8);
+    let (encoding, _) = resolve_encoding(book, Some(&book.encoding))?;
     let candidates = reader::scan_chapters(Path::new(&book.file_path), encoding)?;
     let items = candidates
         .iter()
@@ -205,8 +229,7 @@ pub fn search_book(
     let book = db::book_by_id(&conn, book_id)?
         .ok_or_else(|| "书籍不存在".to_string())?;
     ensure_chapters(&conn, &book)?;
-    let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
-        .unwrap_or(encoding_rs::UTF_8);
+    let (encoding, _) = resolve_encoding(&book, Some(&book.encoding))?;
     let hits = reader::search_file(
         Path::new(&book.file_path),
         encoding,

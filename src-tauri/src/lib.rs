@@ -11,7 +11,7 @@ use tauri::Manager;
 
 pub struct AppState {
     db: Mutex<Connection>,
-    readers: Mutex<HashMap<i64, Arc<Mutex<reader::Reader>>>>,
+    readers: Mutex<HashMap<(i64, String), Arc<Mutex<reader::Reader>>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
