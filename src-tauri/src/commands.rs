@@ -52,6 +52,25 @@ pub fn delete_book(state: State<'_, AppState>, book_id: i64) -> Result<(), Strin
 }
 
 #[tauri::command]
+pub fn export_book(
+    state: State<'_, AppState>,
+    book_id: i64,
+    destination_path: String,
+) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    let book = db::book_by_id(&conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())?;
+    if book.missing {
+        return Err("书籍文件缺失，无法导出".to_string());
+    }
+    crate::import::export_file(
+        Path::new(&book.file_path),
+        Path::new(&destination_path),
+    )?;
+    Ok(destination_path)
+}
+
+#[tauri::command]
 pub fn get_progress(
     state: State<'_, AppState>,
     book_id: i64,

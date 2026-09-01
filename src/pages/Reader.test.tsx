@@ -30,11 +30,17 @@ vi.mock("../lib/api", () => ({
   readPage: vi.fn(),
   readPreviousPage: vi.fn(),
   saveProgress: vi.fn(),
+  exportBook: vi.fn(),
   getChapters: vi.fn(),
   listBookmarks: vi.fn(),
   addBookmark: vi.fn(),
   deleteBookmark: vi.fn(),
   searchBook: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: vi.fn(),
+  save: vi.fn(),
 }));
 
 import {

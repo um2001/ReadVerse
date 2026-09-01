@@ -21,6 +21,10 @@ export function deleteBook(id: number) {
   return invoke<void>("delete_book", { bookId: id });
 }
 
+export function exportBook(bookId: number, destinationPath: string) {
+  return invoke<string>("export_book", { bookId, destinationPath });
+}
+
 export function getProgress(bookId: number) {
   return invoke<ReadingProgress>("get_progress", { bookId });
 }

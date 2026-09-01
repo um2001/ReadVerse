@@ -39,5 +39,11 @@ export default function App() {
     );
   }
 
-  return <Shelf onOpen={setBook} />;
+  return (
+    <Shelf
+      onOpen={setBook}
+      settings={settings}
+      onSettingsChange={updateSettings}
+    />
+  );
 }

@@ -10,6 +10,7 @@ import {
   Bookmark,
   ChevronLeft,
   ChevronRight,
+  Download,
   ListTree,
   Minus,
   Plus,
@@ -19,9 +20,11 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   addBookmark,
   deleteBookmark,
+  exportBook,
   getChapters,
   getPageNumber,
   getProgress,
@@ -32,6 +35,7 @@ import {
   searchBook,
 } from "../lib/api";
 import { clamp } from "../lib/format";
+import { SettingsPanel } from "../components/SettingsPanel";
 import type { Book, Bookmark as BookmarkItem, Chapter, PageResult, SearchResult, Settings } from "../types";
 
 interface ReaderProps {
@@ -48,15 +52,6 @@ interface PageCacheEntry {
 }
 
 type PanelKind = "chapters" | "bookmarks" | "search" | "settings" | null;
-
-const THEMES = [
-  { value: "light" as const, label: "亮色", dot: "#eef4f0" },
-  { value: "sepia" as const, label: "护眼", dot: "#c99a62" },
-  { value: "night" as const, label: "夜间", dot: "#22332c" },
-];
-
-const FONT_FAMILIES = ["默认", "宋体", "楷体", "黑体"];
-const LINE_HEIGHTS = ["1.6", "1.8", "2.0", "2.2"];
 
 export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps) {
   const [fontSize, setFontSize] = useState(18);
@@ -75,6 +70,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [sliderPercent, setSliderPercent] = useState(0);
+  const [notice, setNotice] = useState("");
 
   const offsetRef = useRef(0);
   const fontSizeRef = useRef(18);
@@ -323,6 +319,21 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
     }
   }
 
+  async function handleExport() {
+    try {
+      const destination = await save({
+        defaultPath: `${book.title}.txt`,
+        filters: [{ name: "TXT 电子书", extensions: ["txt"] }],
+      });
+      if (typeof destination !== "string") return;
+      await exportBook(book.id, destination);
+      setNotice("导出成功");
+      window.setTimeout(() => setNotice(""), 3000);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   const percent =
     book.char_count <= 0
       ? 0
@@ -364,7 +375,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
             type="button"
             onClick={onBack}
             title="返回书架"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--text)] transition hover:bg-[var(--surface-soft)]"
+            className="icon-button"
           >
             <ChevronLeft className="h-5 w-5" aria-hidden />
           </button>
@@ -382,11 +393,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
               type="button"
               onClick={() => void toggleBookmark()}
               title={currentBookmarked ? "删除当前书签" : "添加书签"}
-              className={`flex h-9 w-9 items-center justify-center rounded-lg transition hover:bg-[var(--surface-soft)] ${
-                currentBookmarked
-                  ? "text-[var(--accent)]"
-                  : "text-[var(--muted)]"
-              }`}
+              className={`icon-button ${currentBookmarked ? "active" : ""}`}
             >
               <Bookmark
                 className="h-4 w-4"
@@ -398,15 +405,23 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
               type="button"
               onClick={() => setPanel(panel === "search" ? null : "search")}
               title="搜索"
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+              className="icon-button"
             >
               <Search className="h-4 w-4" aria-hidden />
             </button>
             <button
               type="button"
+              onClick={() => void handleExport()}
+              title="导出本书"
+              className="icon-button"
+            >
+              <Download className="h-4 w-4" aria-hidden />
+            </button>
+            <button
+              type="button"
               onClick={() => setPanel(panel === "chapters" ? null : "chapters")}
               title="目录"
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+              className="icon-button"
             >
               <ListTree className="h-4 w-4" aria-hidden />
             </button>
@@ -414,7 +429,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
               type="button"
               onClick={() => setPanel(panel === "settings" ? null : "settings")}
               title="阅读设置"
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--surface-soft)] hover:text-[var(--text)]"
+              className="icon-button"
             >
               <Settings2 className="h-4 w-4" aria-hidden />
             </button>
@@ -424,7 +439,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
                 onClick={() => changeFont(-1)}
                 disabled={fontSize <= 14}
                 title="减小字号"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--surface-soft)] disabled:opacity-40"
+                className="icon-button"
               >
                 <Minus className="h-4 w-4" aria-hidden />
               </button>
@@ -436,7 +451,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
                 onClick={() => changeFont(1)}
                 disabled={fontSize >= 34}
                 title="增大字号"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--surface-soft)] disabled:opacity-40"
+                className="icon-button"
               >
                 <Plus className="h-4 w-4" aria-hidden />
               </button>
@@ -444,6 +459,12 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
           </div>
         </div>
       </header>
+
+      {notice && (
+        <div className="pointer-events-none fixed left-1/2 top-16 z-40 -translate-x-1/2 rounded-lg border border-[var(--accent)] bg-[var(--surface)] px-4 py-2 text-sm text-[var(--accent-strong)] shadow-lg">
+          {notice}
+        </div>
+      )}
 
       <main className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
@@ -491,11 +512,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
                     type="button"
                     onClick={() => setPanel(kind)}
                     title={label}
-                    className={`flex h-9 w-9 items-center justify-center rounded-lg transition ${
-                      panel === kind
-                        ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                        : "text-[var(--muted)] hover:bg-[var(--surface-soft)]"
-                    }`}
+                    className={`icon-button ${panel === kind ? "active" : ""}`}
                   >
                     <Icon className="h-4 w-4" aria-hidden />
                   </button>
@@ -505,7 +522,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
                 type="button"
                 onClick={() => setPanel(null)}
                 title="关闭"
-                className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--surface-soft)]"
+                className="icon-button ml-auto"
               >
                 <X className="h-4 w-4" aria-hidden />
               </button>
@@ -581,7 +598,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
                               );
                             }}
                             title="删除书签"
-                            className="mt-2 flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
+                            className="icon-button danger-button mt-2"
                           >
                             <Trash2 className="h-4 w-4" aria-hidden />
                           </button>
@@ -613,7 +630,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
                     <button
                       type="submit"
                       disabled={searching || !searchQuery.trim()}
-                      className="inline-flex h-9 items-center gap-1 rounded-lg bg-[var(--accent)] px-3 text-sm font-medium text-white transition hover:bg-[var(--accent-strong)] disabled:opacity-50"
+                      className="primary-button"
                     >
                       <Search className="h-4 w-4" aria-hidden />
                       搜索
@@ -651,74 +668,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
               )}
 
               {panel === "settings" && (
-                <div className="space-y-5">
-                  <div>
-                    <h2 className="mb-2 text-sm font-semibold text-[var(--text)]">
-                      阅读主题
-                    </h2>
-                    <div className="grid grid-cols-3 gap-2">
-                      {THEMES.map((theme) => (
-                        <button
-                          key={theme.value}
-                          type="button"
-                          onClick={() =>
-                            onSettingsChange({ theme: theme.value })
-                          }
-                          className={`flex flex-col items-center gap-2 rounded-lg border px-3 py-3 text-sm transition ${
-                            settings.theme === theme.value
-                              ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                              : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-soft)]"
-                          }`}
-                        >
-                          <span
-                            className="h-5 w-5 rounded-full border border-[var(--border)] shadow-sm"
-                            style={{ background: theme.dot }}
-                            aria-hidden
-                          />
-                          {theme.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <label className="block">
-                    <span className="mb-2 block text-sm font-semibold text-[var(--text)]">
-                      正文字体
-                    </span>
-                    <select
-                      value={settings.font_family}
-                      onChange={(event) =>
-                        onSettingsChange({ font_family: event.target.value })
-                      }
-                      className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
-                    >
-                      {FONT_FAMILIES.map((font) => (
-                        <option key={font} value={font}>
-                          {font}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-2 block text-sm font-semibold text-[var(--text)]">
-                      行距
-                    </span>
-                    <select
-                      value={settings.line_height}
-                      onChange={(event) =>
-                        onSettingsChange({ line_height: event.target.value })
-                      }
-                      className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-soft)] px-3 text-sm text-[var(--text)] focus:border-[var(--accent)] focus:outline-none"
-                    >
-                      {LINE_HEIGHTS.map((height) => (
-                        <option key={height} value={height}>
-                          {height}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                <SettingsPanel settings={settings} onChange={onSettingsChange} />
               )}
             </div>
           </aside>
@@ -759,7 +709,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
             type="button"
             onClick={() => void goPrev()}
             disabled={!ready || !canGoPrev}
-            className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[var(--text)] transition hover:bg-[var(--surface-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="text-button"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden />
             上一页
@@ -769,7 +719,7 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
             type="button"
             onClick={() => void goNext()}
             disabled={eof || !ready}
-            className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[var(--text)] transition hover:bg-[var(--surface-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+            className="text-button"
           >
             下一页
             <ChevronRight className="h-4 w-4" aria-hidden />

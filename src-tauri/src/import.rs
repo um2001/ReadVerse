@@ -26,8 +26,12 @@ pub fn detect_encoding(header: &[u8]) -> &'static Encoding {
     let mut detector = EncodingDetector::new();
     detector.feed(header, true);
     let detected = detector.guess(None, true);
-    if detected == UTF_8 && std::str::from_utf8(header).is_err() {
-        encoding_rs::GBK
+    if detected == UTF_8 {
+        match std::str::from_utf8(header) {
+            Ok(_) => UTF_8,
+            Err(err) if err.error_len().is_none() => UTF_8,
+            Err(_) => encoding_rs::GBK,
+        }
     } else {
         detected
     }
@@ -82,6 +86,11 @@ pub fn import_file(
     })
 }
 
+pub fn export_file(source: &Path, destination: &Path) -> Result<(), String> {
+    std::fs::copy(source, destination).map_err(|err| format!("导出失败：{err}"))?;
+    Ok(())
+}
+
 fn copy_and_count_chars(
     source: &Path,
     destination: &Path,
@@ -132,6 +141,14 @@ mod tests {
     }
 
     #[test]
+    fn detects_utf8_when_sample_ends_with_incomplete_char() {
+        let content = "第一章 中文内容\n".repeat(5000);
+        let bytes = content.as_bytes();
+        let truncated = &bytes[..bytes.len() - 1];
+        assert_eq!(detect_encoding(truncated), UTF_8);
+    }
+
+    #[test]
     fn copies_file_and_counts_gbk_chars() {
         let dir = tempdir().unwrap();
         let source = dir.path().join("book.txt");
@@ -158,5 +175,17 @@ mod tests {
 
         let err = import_file(&conn, &source, &books_dir).unwrap_err();
         assert!(err.contains(".txt"));
+    }
+
+    #[test]
+    fn exports_copied_book_file() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("book.txt");
+        let destination = dir.path().join("exported.txt");
+        std::fs::write(&source, "导出的内容").unwrap();
+
+        export_file(&source, &destination).unwrap();
+        let expected = std::fs::read(&source).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), expected);
     }
 }

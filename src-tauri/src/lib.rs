@@ -34,6 +34,7 @@ pub fn run() {
             commands::list_books,
             commands::import_book,
             commands::delete_book,
+            commands::export_book,
             commands::get_progress,
             commands::save_progress,
             commands::read_page,

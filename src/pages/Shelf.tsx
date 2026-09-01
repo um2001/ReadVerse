@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
+  Download,
   FileWarning,
   LibraryBig,
   Search,
+  Settings2,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
-import { deleteBook, importBook, listBooks } from "../lib/api";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { deleteBook, exportBook, importBook, listBooks } from "../lib/api";
 import { formatBytes, formatDate } from "../lib/format";
-import type { Book } from "../types";
+import { SettingsPanel } from "../components/SettingsPanel";
+import type { Book, Settings } from "../types";
 
 interface ShelfProps {
   onOpen: (book: Book) => void;
+  settings: Settings;
+  onSettingsChange: (patch: Partial<Settings>) => void;
 }
 
 type SortMode = "recent" | "created" | "title" | "progress";
@@ -33,12 +39,13 @@ function coverColor(title: string): string {
   return palette[hash % palette.length];
 }
 
-export function Shelf({ onOpen }: ShelfProps) {
+export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
 
@@ -114,6 +121,21 @@ export function Shelf({ onOpen }: ShelfProps) {
     }
   }
 
+  async function handleExport(book: Book) {
+    try {
+      const destination = await save({
+        defaultPath: `${book.title}.txt`,
+        filters: [{ name: "TXT 电子书", extensions: ["txt"] }],
+      });
+      if (typeof destination !== "string") return;
+      await exportBook(book.id, destination);
+      setNotice(`《${book.title}》导出成功`);
+      window.setTimeout(() => setNotice(""), 3000);
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   const visibleBooks = useMemo(() => {
     const filtered = query.trim()
       ? books.filter((book) =>
@@ -153,9 +175,17 @@ export function Shelf({ onOpen }: ShelfProps) {
           </div>
           <button
             type="button"
+            onClick={() => setShowSettings(true)}
+            title="阅读设置"
+            className="icon-button ml-auto"
+          >
+            <Settings2 className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
             onClick={() => void handleImport()}
             disabled={importing}
-            className="ml-auto inline-flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="primary-button"
           >
             <Upload className="h-4 w-4" aria-hidden />
             {importing ? "正在导入…" : "导入 TXT"}
@@ -234,7 +264,7 @@ export function Shelf({ onOpen }: ShelfProps) {
                 type="button"
                 onClick={() => void handleImport()}
                 disabled={importing}
-                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition hover:bg-[var(--accent-strong)] disabled:opacity-60"
+                className="primary-button mt-5"
               >
                 <Upload className="h-4 w-4" aria-hidden />
                 导入第一本书
@@ -302,20 +332,60 @@ export function Shelf({ onOpen }: ShelfProps) {
                       </span>
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(book)}
-                    title="删除这本书"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]"
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleExport(book)}
+                      title="导出这本书"
+                      className="icon-button"
+                    >
+                      <Download className="h-4 w-4" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(book)}
+                      title="删除这本书"
+                      className="icon-button danger-button"
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
       </main>
+
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+          onClick={() => setShowSettings(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-[var(--text)]">
+                阅读设置
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                title="关闭"
+                className="icon-button"
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+            <SettingsPanel
+              settings={settings}
+              onChange={onSettingsChange}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
