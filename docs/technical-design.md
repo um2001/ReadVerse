@@ -145,6 +145,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_book_offset
 
 迁移规则：`user_version = 0` 时只创建 MVP 表；`user_version = 1` 时创建正式版新表；后续版本继续递增。升级过程不删除、不重建已有数据。
 
+正式版数据库迁移到 `user_version = 2`，额外增加：
+
+- `books.format`：标记 `txt` / `epub`
+- `books.cover_path`：EPUB 封面文件路径
+- `reading_progress.encoding`：自动识别或手动选择的编码
+
 ### 8.2 新增后端模块与命令
 
 - 章节：导入或首次打开时扫描章节标题，写入 `chapters` 表；新增 `get_chapters`
@@ -152,6 +158,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_book_offset
 - 书签：新增 `add_bookmark`、`list_bookmarks`、`delete_bookmark`
 - 设置：新增 `get_settings`、`save_settings`
 - 导出：新增 `export_book`，将应用数据目录中的书籍复制到用户选择的目标路径
+- 封面：新增 `get_cover`，以 base64 data URL 返回 EPUB 封面
+- EPUB：新增 `epub` 模块，负责解压、解析 OPF/spine/章节和封面，并将正文归一为纯文本
 - 阅读器：为上一页和页码计算增加按需构建的页起点索引，避免每次都从文件头线性扫描
 
 ### 8.3 章节识别规则
@@ -161,7 +169,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_book_offset
 - 同一章节标题重复出现时按首次出现位置记录
 - 识别结果以字符偏移保存，与阅读进度模型一致
 
-### 8.4 阅读器性能优化
+### 8.4 EPUB 解析
+
+- 通过 `META-INF/container.xml` 定位 OPF
+- 从 OPF 解析元数据、manifest、spine 和封面资源
+- 按 spine 顺序解析 XHTML，提取章节标题和正文，归一为 UTF-8 纯文本
+- 生成的纯文本与章节偏移写入应用数据目录，阅读器仍使用原有字符偏移分页模型
+- EPUB 原始 CSS、字体和复杂排版不进入阅读页，统一使用应用阅读样式
+
+### 8.5 阅读器性能优化
 
 Reader 保留原有分块解码能力，正式版增加页起点索引：
 
@@ -185,6 +201,9 @@ Reader 保留原有分块解码能力，正式版增加页起点索引：
 - 大文件：保持 256KB 分块读取；章节扫描和搜索逐块进行，不一次性加载全文
 - 多字节编码：编码检测优先识别 BOM，chardetng 兜底；解码器跨块保留状态，避免中文字符截断
 - 编码采样截断：UTF-8 采样末尾出现不完整多字节字符时仍按 UTF-8 处理，避免误判为 GBK
+- 编码候选顺序：UTF-8 → GBK → GB2312 → Big5 → windows-1252，windows-1252 仅作为最后兜底
+- 编码校验：多段采样解码后统计替换字符，出现大量 `�` 时自动尝试下一候选编码
+- 编码手动切换：阅读页切换编码后实时重读并持久化，书架标签同步展示
 - 文件缺失或损坏：阅读页显示可读错误，返回书架后仍可继续管理其他书籍
 - 删除失败：删除记录后尝试清理文件；文件删除失败不影响书架记录删除，并在日志或返回结果中体现
 - 重复导入：书架前端按书名查重，重复书名提示并跳过

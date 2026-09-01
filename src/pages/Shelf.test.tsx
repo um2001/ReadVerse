@@ -43,6 +43,7 @@ vi.mock("../lib/api", () => ({
   importBook: vi.fn(),
   deleteBook: vi.fn(),
   exportBook: vi.fn(),
+  getCover: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -50,7 +51,13 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(),
 }));
 
-import { deleteBook, exportBook, importBook, listBooks } from "../lib/api";
+import {
+  deleteBook,
+  exportBook,
+  getCover,
+  importBook,
+  listBooks,
+} from "../lib/api";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 const settings = {
@@ -66,6 +73,7 @@ describe("Shelf", () => {
     vi.mocked(importBook).mockResolvedValue(newBook);
     vi.mocked(deleteBook).mockResolvedValue(undefined);
     vi.mocked(exportBook).mockResolvedValue("C:\\out\\test.txt");
+    vi.mocked(getCover).mockResolvedValue(null);
     vi.mocked(open).mockResolvedValue("C:\\incoming\\new.txt");
     vi.mocked(save).mockResolvedValue("C:\\out\\test.txt");
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -87,7 +95,7 @@ describe("Shelf", () => {
     expect(await screen.findByText("测试书")).toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "导入 TXT" }));
+    await user.click(screen.getByRole("button", { name: "导入电子书" }));
 
     await waitFor(() => expect(importBook).toHaveBeenCalledWith("C:\\incoming\\new.txt"));
     await waitFor(() => expect(listBooks).toHaveBeenCalledTimes(2));

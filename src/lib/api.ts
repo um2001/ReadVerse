@@ -98,3 +98,7 @@ export function listBookmarks(bookId: number) {
 export function deleteBookmark(bookmarkId: number) {
   return invoke<void>("delete_bookmark", { bookmarkId });
 }
+
+export function getCover(bookId: number) {
+  return invoke<string | null>("get_cover", { bookId });
+}

@@ -11,7 +11,13 @@ import {
   X,
 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { deleteBook, exportBook, importBook, listBooks } from "../lib/api";
+import {
+  deleteBook,
+  exportBook,
+  getCover,
+  importBook,
+  listBooks,
+} from "../lib/api";
 import { formatBytes, formatDate } from "../lib/format";
 import { SettingsPanel } from "../components/SettingsPanel";
 import type { Book, Settings } from "../types";
@@ -27,7 +33,7 @@ type SortMode = "recent" | "created" | "title" | "progress";
 function fileStem(filePath: string): string {
   const parts = filePath.split(/[\\/]/);
   const name = parts[parts.length - 1] ?? "";
-  return name.replace(/\.txt$/i, "") || "未命名书籍";
+  return name.replace(/\.(txt|epub)$/i, "") || "未命名书籍";
 }
 
 function coverColor(title: string): string {
@@ -46,6 +52,7 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [covers, setCovers] = useState<Record<number, string>>({});
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
 
@@ -65,6 +72,30 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCovers() {
+      const next: Record<number, string> = {};
+      await Promise.all(
+        books
+          .filter((book) => book.format === "epub" && book.cover_path)
+          .map(async (book) => {
+            try {
+              const cover = await getCover(book.id);
+              if (cover) next[book.id] = cover;
+            } catch {
+              // 封面加载失败不影响书架使用
+            }
+          }),
+      );
+      if (!cancelled) setCovers(next);
+    }
+    void loadCovers();
+    return () => {
+      cancelled = true;
+    };
+  }, [books]);
+
   async function handleImport() {
     setImporting(true);
     setError("");
@@ -72,7 +103,12 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
     try {
       const selected = await open({
         multiple: true,
-        filters: [{ name: "TXT 电子书", extensions: ["txt"] }],
+        filters: [
+          {
+            name: "TXT / EPUB 电子书",
+            extensions: ["txt", "epub"],
+          },
+        ],
       });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
@@ -188,7 +224,7 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
             className="primary-button"
           >
             <Upload className="h-4 w-4" aria-hidden />
-            {importing ? "正在导入…" : "导入 TXT"}
+            {importing ? "正在导入…" : "导入电子书"}
           </button>
         </div>
       </header>
@@ -257,7 +293,7 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
             <p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">
               {query.trim()
                 ? "换个书名关键词试试，或清空搜索条件。"
-                : "导入一本本地 TXT 电子书，阅读位置会自动保存。"}
+                : "导入一本本地 TXT 或 EPUB 电子书，阅读位置会自动保存。"}
             </p>
             {!query.trim() && (
               <button
@@ -267,7 +303,7 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
                 className="primary-button mt-5"
               >
                 <Upload className="h-4 w-4" aria-hidden />
-                导入第一本书
+                导入电子书
               </button>
             )}
           </div>
@@ -292,11 +328,22 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
                     className="flex min-w-0 flex-1 items-center gap-4 text-left"
                   >
                     <span
-                      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-white shadow-sm"
-                      style={{ background: coverColor(book.title) }}
-                      aria-hidden
+                      className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg text-lg font-semibold text-white shadow-sm"
+                      style={
+                        book.format === "epub" && covers[book.id]
+                          ? { background: "transparent" }
+                          : { background: coverColor(book.title) }
+                      }
                     >
-                      {book.title.slice(0, 1)}
+                      {book.format === "epub" && covers[book.id] ? (
+                        <img
+                          src={covers[book.id]}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span aria-hidden>{book.title.slice(0, 1)}</span>
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
@@ -311,7 +358,8 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
                         )}
                       </span>
                       <span className="mt-1 block text-xs text-[var(--muted)]">
-                        {formatBytes(book.file_size)} · {book.encoding} ·{" "}
+                        {formatBytes(book.file_size)} ·{" "}
+                        {book.format.toUpperCase()} · {book.encoding} ·{" "}
                         {formatDate(book.created_at)}
                       </span>
                       <span className="mt-2 block">

@@ -135,18 +135,21 @@ pub fn import_file(
     source: &Path,
     books_dir: &Path,
 ) -> Result<Book, String> {
-    let is_txt = source
+    let extension = source
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("txt"))
-        .unwrap_or(false);
-    if !is_txt {
-        return Err("仅支持导入 .txt 文件".to_string());
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    if extension == "epub" {
+        return crate::epub::import_epub(conn, source, books_dir);
+    }
+    if extension != "txt" {
+        return Err("仅支持导入 TXT 或 EPUB 文件".to_string());
     }
 
     let metadata = fs::metadata(source).map_err(|err| format!("无法读取文件：{err}"))?;
     if !metadata.is_file() {
-        return Err("请选择 TXT 文件".to_string());
+        return Err("请选择 TXT 或 EPUB 文件".to_string());
     }
 
     let encoding = detect_encoding_from_file(source)?;
@@ -278,7 +281,7 @@ mod tests {
         let conn = crate::db::open(&dir.path().join("test.db")).unwrap();
 
         let err = import_file(&conn, &source, &books_dir).unwrap_err();
-        assert!(err.contains(".txt"));
+        assert!(err.contains("TXT 或 EPUB"));
     }
 
     #[test]

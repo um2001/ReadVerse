@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+pub mod epub;
 pub mod import;
 pub mod reader;
 
@@ -35,6 +36,7 @@ pub fn run() {
             commands::import_book,
             commands::delete_book,
             commands::export_book,
+            commands::get_cover,
             commands::get_progress,
             commands::save_progress,
             commands::read_page,

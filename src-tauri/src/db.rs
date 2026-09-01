@@ -46,6 +46,12 @@ pub struct Bookmark {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeletedBook {
+    pub file_path: String,
+    pub format: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: String,
@@ -192,18 +198,23 @@ pub fn list_books(conn: &Connection) -> Result<Vec<Book>, String> {
         .map_err(|err| err.to_string())
 }
 
-pub fn delete_book(conn: &Connection, id: i64) -> Result<Option<String>, String> {
-    let file_path = conn
+pub fn delete_book(conn: &Connection, id: i64) -> Result<Option<DeletedBook>, String> {
+    let deleted = conn
         .query_row(
-            "SELECT file_path FROM books WHERE id = ?1",
+            "SELECT file_path, format FROM books WHERE id = ?1",
             params![id],
-            |row| row.get::<_, String>(0),
+            |row| {
+                Ok(DeletedBook {
+                    file_path: row.get(0)?,
+                    format: row.get(1)?,
+                })
+            },
         )
         .optional()
         .map_err(|err| err.to_string())?;
     conn.execute("DELETE FROM books WHERE id = ?1", params![id])
         .map_err(|err| err.to_string())?;
-    Ok(file_path)
+    Ok(deleted)
 }
 
 pub fn get_progress(conn: &Connection, book_id: i64) -> Result<ReadingProgress, String> {

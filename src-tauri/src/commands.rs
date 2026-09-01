@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -45,10 +46,47 @@ pub fn delete_book(state: State<'_, AppState>, book_id: i64) -> Result<(), Strin
         let mut readers = state.readers.lock().map_err(|err| err.to_string())?;
         readers.retain(|(cached_book_id, _), _| *cached_book_id != book_id);
     }
-    if let Some(file_path) = file_path {
-        let _ = fs::remove_file(file_path);
+    if let Some(deleted) = file_path {
+        if deleted.format == "epub" {
+            if let Some(parent) = Path::new(&deleted.file_path).parent() {
+                let _ = fs::remove_dir_all(parent);
+            }
+        } else {
+            let _ = fs::remove_file(deleted.file_path);
+        }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_cover(state: State<'_, AppState>, book_id: i64) -> Result<Option<String>, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    let book = db::book_by_id(&conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())?;
+    if book.cover_path.is_empty() || !Path::new(&book.cover_path).is_file() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&book.cover_path).map_err(|err| format!("读取封面失败：{err}"))?;
+    let mime = cover_mime(&book.cover_path);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(Some(format!("data:{mime};base64,{encoded}")))
+}
+
+fn cover_mime(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
 }
 
 #[tauri::command]
