@@ -12,7 +12,7 @@ const THEMES = [
 ];
 
 const FONT_FAMILIES = ["默认", "宋体", "楷体", "黑体"];
-const LINE_HEIGHTS = ["1.6", "1.8", "2.0", "2.2"];
+const LINE_HEIGHTS = ["1.0", "1.2", "1.4", "1.6", "1.8", "2.0"];
 
 export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
   return (
