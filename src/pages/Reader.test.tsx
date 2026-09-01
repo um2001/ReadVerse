@@ -14,6 +14,8 @@ const book: Book = {
   created_at: "2026-09-01 10:00:00",
   format: "txt",
   cover_path: "",
+  is_favorite: false,
+  is_read: false,
   missing: false,
   last_char_offset: 12,
   font_size: 20,

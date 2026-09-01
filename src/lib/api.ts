@@ -21,6 +21,18 @@ export function deleteBook(id: number) {
   return invoke<void>("delete_book", { bookId: id });
 }
 
+export function setFavorite(bookId: number, favorite: boolean) {
+  return invoke<Book>("set_favorite", { bookId, favorite });
+}
+
+export function setReadStatus(bookId: number, isRead: boolean) {
+  return invoke<Book>("set_read", { bookId, isRead });
+}
+
+export function renameBook(bookId: number, title: string) {
+  return invoke<Book>("rename_book", { bookId, title });
+}
+
 export function exportBook(bookId: number, destinationPath: string) {
   return invoke<string>("export_book", { bookId, destinationPath });
 }

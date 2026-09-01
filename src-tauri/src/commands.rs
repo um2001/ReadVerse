@@ -59,6 +59,28 @@ pub fn delete_book(state: State<'_, AppState>, book_id: i64) -> Result<(), Strin
 }
 
 #[tauri::command]
+pub fn set_favorite(
+    state: State<'_, AppState>,
+    book_id: i64,
+    favorite: bool,
+) -> Result<Book, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::set_favorite(&conn, book_id, favorite)
+}
+
+#[tauri::command]
+pub fn set_read(state: State<'_, AppState>, book_id: i64, is_read: bool) -> Result<Book, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::set_read(&conn, book_id, is_read)
+}
+
+#[tauri::command]
+pub fn rename_book(state: State<'_, AppState>, book_id: i64, title: String) -> Result<Book, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::rename_book(&conn, book_id, &title)
+}
+
+#[tauri::command]
 pub fn get_cover(state: State<'_, AppState>, book_id: i64) -> Result<Option<String>, String> {
     let conn = state.db.lock().map_err(|err| err.to_string())?;
     let book = db::book_by_id(&conn, book_id)?

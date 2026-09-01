@@ -14,6 +14,8 @@ pub struct Book {
     pub created_at: String,
     pub format: String,
     pub cover_path: String,
+    pub is_favorite: bool,
+    pub is_read: bool,
     pub missing: bool,
     pub last_char_offset: i64,
     pub font_size: i64,
@@ -129,6 +131,16 @@ pub fn open(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|err| err.to_string())?;
     }
+    if version < 3 {
+        conn.execute_batch(
+            "
+            ALTER TABLE books ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE books ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0;
+            PRAGMA user_version = 3;
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    }
     Ok(conn)
 }
 
@@ -165,6 +177,7 @@ pub fn book_by_id(conn: &Connection, id: i64) -> Result<Option<Book>, String> {
         "SELECT b.id, b.title, b.file_path, b.file_size,
                 COALESCE(NULLIF(NULLIF(p.encoding, ''), 'auto'), b.encoding),
                 b.char_count, b.created_at, b.format, b.cover_path,
+                b.is_favorite, b.is_read,
                 COALESCE(p.char_offset, 0), COALESCE(p.font_size, 18),
                 COALESCE(p.updated_at, '')
          FROM books b
@@ -183,6 +196,7 @@ pub fn list_books(conn: &Connection) -> Result<Vec<Book>, String> {
             "SELECT b.id, b.title, b.file_path, b.file_size,
                     COALESCE(NULLIF(NULLIF(p.encoding, ''), 'auto'), b.encoding),
                     b.char_count, b.created_at, b.format, b.cover_path,
+                    b.is_favorite, b.is_read,
                     COALESCE(p.char_offset, 0), COALESCE(p.font_size, 18),
                     COALESCE(p.updated_at, '')
              FROM books b
@@ -215,6 +229,49 @@ pub fn delete_book(conn: &Connection, id: i64) -> Result<Option<DeletedBook>, St
     conn.execute("DELETE FROM books WHERE id = ?1", params![id])
         .map_err(|err| err.to_string())?;
     Ok(deleted)
+}
+
+pub fn set_favorite(conn: &Connection, book_id: i64, favorite: bool) -> Result<Book, String> {
+    if book_by_id(conn, book_id)?.is_none() {
+        return Err("书籍不存在".to_string());
+    }
+    conn.execute(
+        "UPDATE books SET is_favorite = ?1 WHERE id = ?2",
+        params![favorite as i64, book_id],
+    )
+    .map_err(|err| err.to_string())?;
+    book_by_id(conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())
+}
+
+pub fn set_read(conn: &Connection, book_id: i64, is_read: bool) -> Result<Book, String> {
+    if book_by_id(conn, book_id)?.is_none() {
+        return Err("书籍不存在".to_string());
+    }
+    conn.execute(
+        "UPDATE books SET is_read = ?1 WHERE id = ?2",
+        params![is_read as i64, book_id],
+    )
+    .map_err(|err| err.to_string())?;
+    book_by_id(conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())
+}
+
+pub fn rename_book(conn: &Connection, book_id: i64, title: &str) -> Result<Book, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("书名不能为空".to_string());
+    }
+    if book_by_id(conn, book_id)?.is_none() {
+        return Err("书籍不存在".to_string());
+    }
+    conn.execute(
+        "UPDATE books SET title = ?1 WHERE id = ?2",
+        params![title, book_id],
+    )
+    .map_err(|err| err.to_string())?;
+    book_by_id(conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())
 }
 
 pub fn get_progress(conn: &Connection, book_id: i64) -> Result<ReadingProgress, String> {
@@ -454,9 +511,11 @@ fn book_from_row(row: &Row<'_>) -> rusqlite::Result<Book> {
         format: row.get(7)?,
         cover_path: row.get(8)?,
         missing: !Path::new(&file_path).is_file(),
-        last_char_offset: row.get(9)?,
-        font_size: row.get(10)?,
-        last_read_at: row.get(11)?,
+        is_favorite: row.get::<_, i64>(9)? != 0,
+        is_read: row.get::<_, i64>(10)? != 0,
+        last_char_offset: row.get(11)?,
+        font_size: row.get(12)?,
+        last_read_at: row.get(13)?,
     })
 }
 
@@ -548,5 +607,35 @@ mod tests {
         assert_eq!(bookmarks[0].char_offset, 12);
         delete_bookmark(&conn, bookmarks[0].id).unwrap();
         assert_eq!(list_bookmarks(&conn, book.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn favorite_read_and_rename_roundtrip() {
+        let dir = tempdir().unwrap();
+        let conn = open(&dir.path().join("test.db")).unwrap();
+        let book = insert_book(
+            &conn,
+            "原始书名",
+            Path::new("C:\\books\\meta.txt"),
+            1024,
+            "UTF-8",
+            120,
+            "txt",
+            "",
+        )
+        .unwrap();
+
+        let favorite = set_favorite(&conn, book.id, true).unwrap();
+        assert!(favorite.is_favorite);
+        let read = set_read(&conn, book.id, true).unwrap();
+        assert!(read.is_read);
+        let renamed = rename_book(&conn, book.id, "本地显示名").unwrap();
+        assert_eq!(renamed.title, "本地显示名");
+        assert_eq!(renamed.file_path, book.file_path);
+
+        let saved = book_by_id(&conn, book.id).unwrap().unwrap();
+        assert!(saved.is_favorite);
+        assert!(saved.is_read);
+        assert_eq!(saved.title, "本地显示名");
     }
 }

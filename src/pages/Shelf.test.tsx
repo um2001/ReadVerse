@@ -15,6 +15,8 @@ const books: Book[] = [
     created_at: "2026-09-01 10:00:00",
     format: "txt",
     cover_path: "",
+    is_favorite: false,
+    is_read: false,
     missing: false,
     last_char_offset: 240,
     font_size: 18,
@@ -32,6 +34,8 @@ const newBook: Book = {
   created_at: "2026-09-01 11:00:00",
   format: "txt",
   cover_path: "",
+  is_favorite: false,
+  is_read: false,
   missing: false,
   last_char_offset: 0,
   font_size: 18,
@@ -44,6 +48,9 @@ vi.mock("../lib/api", () => ({
   deleteBook: vi.fn(),
   exportBook: vi.fn(),
   getCover: vi.fn(),
+  setFavorite: vi.fn(),
+  setReadStatus: vi.fn(),
+  renameBook: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -57,6 +64,9 @@ import {
   getCover,
   importBook,
   listBooks,
+  renameBook,
+  setFavorite,
+  setReadStatus,
 } from "../lib/api";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
@@ -74,6 +84,18 @@ describe("Shelf", () => {
     vi.mocked(deleteBook).mockResolvedValue(undefined);
     vi.mocked(exportBook).mockResolvedValue("C:\\out\\test.txt");
     vi.mocked(getCover).mockResolvedValue(null);
+    vi.mocked(setFavorite).mockResolvedValue({
+      ...books[0],
+      is_favorite: true,
+    });
+    vi.mocked(setReadStatus).mockResolvedValue({
+      ...books[0],
+      is_read: true,
+    });
+    vi.mocked(renameBook).mockResolvedValue({
+      ...books[0],
+      title: "新名字",
+    });
     vi.mocked(open).mockResolvedValue("C:\\incoming\\new.txt");
     vi.mocked(save).mockResolvedValue("C:\\out\\test.txt");
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -113,7 +135,8 @@ describe("Shelf", () => {
     await screen.findByText("测试书");
 
     const user = userEvent.setup();
-    await user.click(screen.getByTitle("删除这本书"));
+    await user.click(screen.getByTitle("更多操作"));
+    await user.click(screen.getByText("删除书籍"));
 
     expect(window.confirm).toHaveBeenCalledWith("确定删除《测试书》吗？");
     expect(deleteBook).toHaveBeenCalledWith(1);
@@ -145,7 +168,9 @@ describe("Shelf", () => {
     );
     await screen.findByText("测试书");
 
-    await userEvent.setup().click(screen.getByTitle("导出这本书"));
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("更多操作"));
+    await user.click(screen.getByText("导出书籍"));
 
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ defaultPath: "测试书.txt" }),
@@ -168,5 +193,65 @@ describe("Shelf", () => {
     await userEvent.setup().click(screen.getByTitle("阅读设置"));
 
     expect(screen.getByText("阅读主题")).toBeInTheDocument();
+  });
+
+  it("favorites a book and shows it in the library view", async () => {
+    render(
+      <Shelf
+        onOpen={vi.fn()}
+        settings={settings}
+        onSettingsChange={vi.fn()}
+      />,
+    );
+    await screen.findByText("测试书");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("更多操作"));
+    await user.click(screen.getByText("收藏"));
+
+    await waitFor(() => expect(setFavorite).toHaveBeenCalledWith(1, true));
+    expect(await screen.findByText("已加入藏书馆")).toBeInTheDocument();
+
+    await user.click(screen.getByText("藏书馆"));
+    expect(screen.getByText("测试书")).toBeInTheDocument();
+  });
+
+  it("marks a book as read from the menu", async () => {
+    render(
+      <Shelf
+        onOpen={vi.fn()}
+        settings={settings}
+        onSettingsChange={vi.fn()}
+      />,
+    );
+    await screen.findByText("测试书");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("更多操作"));
+    await user.click(screen.getByText("标记已读"));
+
+    await waitFor(() => expect(setReadStatus).toHaveBeenCalledWith(1, true));
+    expect((await screen.findAllByText("已读")).length).toBeGreaterThan(0);
+  });
+
+  it("renames a book locally", async () => {
+    render(
+      <Shelf
+        onOpen={vi.fn()}
+        settings={settings}
+        onSettingsChange={vi.fn()}
+      />,
+    );
+    await screen.findByText("测试书");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTitle("更多操作"));
+    await user.click(screen.getByText("重命名书籍"));
+    await user.clear(screen.getByPlaceholderText("输入新的显示名称"));
+    await user.type(screen.getByPlaceholderText("输入新的显示名称"), "新名字");
+    await user.click(screen.getByText("保存"));
+
+    expect(renameBook).toHaveBeenCalledWith(1, "新名字");
+    expect(await screen.findByText("新名字")).toBeInTheDocument();
   });
 });

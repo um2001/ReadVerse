@@ -8,6 +8,8 @@ export interface Book {
   created_at: string;
   format: string;
   cover_path: string;
+  is_favorite: boolean;
+  is_read: boolean;
   missing: boolean;
   last_char_offset: number;
   font_size: number;

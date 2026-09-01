@@ -151,6 +151,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_book_offset
 - `books.cover_path`：EPUB 封面文件路径
 - `reading_progress.encoding`：自动识别或手动选择的编码
 
+书架状态迁移到 `user_version = 3`，额外增加：
+
+- `books.is_favorite`：是否收藏
+- `books.is_read`：是否标记为已读
+
 ### 8.2 新增后端模块与命令
 
 - 章节：导入或首次打开时扫描章节标题，写入 `chapters` 表；新增 `get_chapters`
@@ -160,6 +165,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_book_offset
 - 导出：新增 `export_book`，将应用数据目录中的书籍复制到用户选择的目标路径
 - 封面：新增 `get_cover`，以 base64 data URL 返回 EPUB 封面
 - EPUB：新增 `epub` 模块，负责解压、解析 OPF/spine/章节和封面，并将正文归一为纯文本
+- 书架状态：新增 `set_favorite`、`set_read`、`rename_book`，只更新本地元数据
 - 阅读器：为上一页和页码计算增加按需构建的页起点索引，避免每次都从文件头线性扫描
 
 ### 8.3 章节识别规则
