@@ -36,7 +36,7 @@ interface ShelfProps {
 }
 
 type SortMode = "recent" | "created" | "title" | "progress";
-type ShelfView = "home" | "library";
+type ShelfView = "home" | "library" | "read";
 
 function fileStem(filePath: string): string {
   const parts = filePath.split(/[\\/]/);
@@ -240,8 +240,14 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
   }
 
   const favoriteCount = books.filter((book) => book.is_favorite).length;
+  const readCount = books.filter((book) => book.is_read).length;
   const visibleBooks = useMemo(() => {
-    const baseBooks = view === "library" ? books.filter((book) => book.is_favorite) : books;
+    const baseBooks =
+      view === "library"
+        ? books.filter((book) => book.is_favorite)
+        : view === "read"
+          ? books.filter((book) => book.is_read)
+          : books;
     const filtered = query.trim()
       ? baseBooks.filter((book) =>
           book.title.toLowerCase().includes(query.trim().toLowerCase()),
@@ -330,6 +336,19 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
               藏书馆
               <span className="text-xs opacity-70">{favoriteCount}</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setView("read")}
+              className={`flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                view === "read"
+                  ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                  : "text-[var(--muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+              已读完
+              <span className="text-xs opacity-70">{readCount}</span>
+            </button>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <label className="relative">
@@ -378,6 +397,8 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
               {view === "library" ? (
                 <Heart className="h-7 w-7" aria-hidden />
+              ) : view === "read" ? (
+                <CheckCircle2 className="h-7 w-7" aria-hidden />
               ) : (
                 <BookOpen className="h-7 w-7" aria-hidden />
               )}
@@ -387,6 +408,8 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
                 ? "没有找到匹配的书籍"
                 : view === "library"
                   ? "藏书馆还是空的"
+                  : view === "read"
+                    ? "还没有标记已读的书籍"
                   : "书架还是空的"}
             </h3>
             <p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">
@@ -394,6 +417,8 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
                 ? "换个书名关键词试试，或清空搜索条件。"
                 : view === "library"
                   ? "在首页书籍的三点菜单中点击“收藏”，书籍会出现在这里。"
+                  : view === "read"
+                    ? "在首页书籍的三点菜单中点击“标记已读”，书籍会出现在这里。"
                   : "导入一本本地 TXT 或 EPUB 电子书，阅读位置会自动保存。"}
             </p>
             {!query.trim() && (

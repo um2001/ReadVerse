@@ -234,6 +234,25 @@ describe("Shelf", () => {
     expect((await screen.findAllByText("已读")).length).toBeGreaterThan(0);
   });
 
+  it("shows read books in the read view", async () => {
+    vi.mocked(listBooks).mockResolvedValue([
+      { ...books[0], is_read: true },
+    ]);
+
+    render(
+      <Shelf
+        onOpen={vi.fn()}
+        settings={settings}
+        onSettingsChange={vi.fn()}
+      />,
+    );
+    await screen.findByText("测试书");
+
+    await userEvent.setup().click(screen.getByText("已读完"));
+
+    expect(screen.getByText("测试书")).toBeInTheDocument();
+  });
+
   it("renames a book locally", async () => {
     render(
       <Shelf
