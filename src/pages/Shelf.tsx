@@ -421,7 +421,9 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
               return (
                 <li
                   key={book.id}
-                  className="group relative flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow)] transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-lg"
+                  className={`group relative flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-[var(--shadow)] transition hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-lg ${
+                    openMenuId === book.id ? "z-40" : "z-0"
+                  }`}
                 >
                   <button
                     type="button"
@@ -516,7 +518,7 @@ export function Shelf({ onOpen, settings, onSettingsChange }: ShelfProps) {
                     </button>
                     {openMenuId === book.id && (
                       <div
-                        className="absolute right-0 top-10 z-30 w-48 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 shadow-xl"
+                        className="absolute right-0 top-10 z-50 w-48 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 shadow-xl"
                         onPointerDown={(event) => event.stopPropagation()}
                       >
                         <button
