@@ -13,6 +13,10 @@ const books: Book[] = [
     encoding: "UTF-8",
     char_count: 1200,
     created_at: "2026-09-01 10:00:00",
+    missing: false,
+    last_char_offset: 240,
+    font_size: 18,
+    last_read_at: "2026-09-01 11:00:00",
   },
 ];
 
@@ -24,6 +28,10 @@ const newBook: Book = {
   encoding: "GBK",
   char_count: 800,
   created_at: "2026-09-01 11:00:00",
+  missing: false,
+  last_char_offset: 0,
+  font_size: 18,
+  last_read_at: "",
 };
 
 vi.mock("../lib/api", () => ({

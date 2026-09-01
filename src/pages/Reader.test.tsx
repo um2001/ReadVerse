@@ -12,11 +12,16 @@ const book: Book = {
   encoding: "UTF-8",
   char_count: 200,
   created_at: "2026-09-01 10:00:00",
+  missing: false,
+  last_char_offset: 12,
+  font_size: 20,
+  last_read_at: "2026-09-01 10:00:00",
 };
 
 const pages: Record<number, PageResult> = {
   12: { text: "第一页内容\n", start_offset: 12, next_offset: 40, eof: false },
   40: { text: "第二页内容\n", start_offset: 40, next_offset: 80, eof: true },
+  80: { text: "第二章内容\n", start_offset: 80, next_offset: 120, eof: true },
 };
 
 vi.mock("../lib/api", () => ({
@@ -25,6 +30,11 @@ vi.mock("../lib/api", () => ({
   readPage: vi.fn(),
   readPreviousPage: vi.fn(),
   saveProgress: vi.fn(),
+  getChapters: vi.fn(),
+  listBookmarks: vi.fn(),
+  addBookmark: vi.fn(),
+  deleteBookmark: vi.fn(),
+  searchBook: vi.fn(),
 }));
 
 import {
@@ -33,6 +43,11 @@ import {
   readPage,
   readPreviousPage,
   saveProgress,
+  getChapters,
+  listBookmarks,
+  addBookmark,
+  deleteBookmark,
+  searchBook,
 } from "../lib/api";
 
 describe("Reader", () => {
@@ -48,10 +63,28 @@ describe("Reader", () => {
     vi.mocked(readPage).mockImplementation(async (_bookId, offset) => pages[offset]);
     vi.mocked(readPreviousPage).mockImplementation(async (_bookId, offset) => pages[offset]);
     vi.mocked(saveProgress).mockResolvedValue(undefined);
+    vi.mocked(getChapters).mockResolvedValue([]);
+    vi.mocked(listBookmarks).mockResolvedValue([]);
+    vi.mocked(addBookmark).mockResolvedValue({
+      id: 1,
+      book_id: book.id,
+      char_offset: 12,
+      excerpt: "第一页内容",
+      created_at: "2026-09-01 10:00:00",
+    });
+    vi.mocked(deleteBookmark).mockResolvedValue(undefined);
+    vi.mocked(searchBook).mockResolvedValue([]);
   });
 
   it("restores progress and saves the next page offset", async () => {
-    render(<Reader book={book} onBack={vi.fn()} />);
+    render(
+      <Reader
+        book={book}
+        settings={{ theme: "light", font_family: "默认", line_height: "1.8" }}
+        onSettingsChange={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
 
     expect(await screen.findByText("第一页内容")).toBeInTheDocument();
     expect(readPage).toHaveBeenCalledWith(book.id, 12);
@@ -67,7 +100,14 @@ describe("Reader", () => {
   });
 
   it("changes font size and persists it", async () => {
-    render(<Reader book={book} onBack={vi.fn()} />);
+    render(
+      <Reader
+        book={book}
+        settings={{ theme: "light", font_family: "默认", line_height: "1.8" }}
+        onSettingsChange={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
     await screen.findByText("第一页内容");
 
     await userEvent.setup().click(screen.getByTitle("增大字号"));
@@ -85,7 +125,14 @@ describe("Reader", () => {
     vi.mocked(getPageNumber).mockResolvedValue(2);
     vi.mocked(readPreviousPage).mockResolvedValue(pages[12]);
 
-    render(<Reader book={book} onBack={vi.fn()} />);
+    render(
+      <Reader
+        book={book}
+        settings={{ theme: "light", font_family: "默认", line_height: "1.8" }}
+        onSettingsChange={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
     expect(await screen.findByText("第二页内容")).toBeInTheDocument();
     expect(screen.getByText(/第 2 页/)).toBeInTheDocument();
 
@@ -97,5 +144,27 @@ describe("Reader", () => {
     await waitFor(() =>
       expect(saveProgress).toHaveBeenCalledWith(book.id, 12, 20),
     );
+  });
+
+  it("opens the chapter list and jumps to a chapter", async () => {
+    vi.mocked(getChapters).mockResolvedValue([
+      { id: 1, book_id: book.id, title: "第一章", char_offset: 0 },
+      { id: 2, book_id: book.id, title: "第二章", char_offset: 80 },
+    ]);
+
+    render(
+      <Reader
+        book={book}
+        settings={{ theme: "light", font_family: "默认", line_height: "1.8" }}
+        onSettingsChange={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+    await screen.findByText("第一页内容");
+
+    await userEvent.setup().click(screen.getByTitle("目录"));
+    await userEvent.setup().click(screen.getByText("第二章"));
+
+    expect(readPage).toHaveBeenCalledWith(book.id, 80);
   });
 });
