@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use chardetng::EncodingDetector;
@@ -10,8 +10,10 @@ use rusqlite::Connection;
 
 use crate::db::{self, Book};
 
-const HEADER_SIZE: usize = 64 * 1024;
 const CHUNK_SIZE: usize = 256 * 1024;
+const SAMPLE_SIZE: usize = 64 * 1024;
+
+const ENCODING_CANDIDATES: [&str; 5] = ["UTF-8", "GBK", "GB2312", "Big5", "windows-1252"];
 
 pub fn detect_encoding(header: &[u8]) -> &'static Encoding {
     if header.starts_with(&[0xEF, 0xBB, 0xBF]) {
@@ -37,6 +39,97 @@ pub fn detect_encoding(header: &[u8]) -> &'static Encoding {
     }
 }
 
+fn read_sample(file: &mut File, position: u64, size: usize) -> std::io::Result<Vec<u8>> {
+    file.seek(SeekFrom::Start(position))?;
+    let mut buffer = vec![0u8; size];
+    let mut read = 0usize;
+    while read < buffer.len() {
+        let count = file.read(&mut buffer[read..])?;
+        if count == 0 {
+            break;
+        }
+        read += count;
+    }
+    buffer.truncate(read);
+    Ok(buffer)
+}
+
+fn sample_replacement_ratio(encoding: &'static Encoding, sample: &[u8]) -> f64 {
+    let (decoded, _, _) = encoding.decode(sample);
+    let total = decoded.chars().count();
+    if total == 0 {
+        return 0.0;
+    }
+    let replacements = decoded.chars().filter(|ch| *ch == '\u{FFFD}').count();
+    replacements as f64 / total as f64
+}
+
+fn is_clean_utf8_sample(sample: &[u8]) -> bool {
+    let mut offset = 0usize;
+    while offset < sample.len() {
+        match std::str::from_utf8(&sample[offset..]) {
+            Ok(_) => return true,
+            Err(err) if err.error_len().is_none() => return true,
+            Err(err) if err.valid_up_to() == 0 => {
+                offset += 1;
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+pub fn detect_encoding_from_file(path: &Path) -> Result<&'static Encoding, String> {
+    let mut file = File::open(path).map_err(|err| format!("无法读取文件：{err}"))?;
+    let file_len = file
+        .metadata()
+        .map_err(|err| err.to_string())?
+        .len();
+
+    let mut samples = Vec::new();
+    if file_len <= SAMPLE_SIZE as u64 {
+        samples.push(read_sample(&mut file, 0, SAMPLE_SIZE).map_err(|err| err.to_string())?);
+    } else {
+        let mut positions = vec![0u64, file_len / 4, file_len / 2, file_len * 3 / 4];
+        positions.push(file_len.saturating_sub(SAMPLE_SIZE as u64));
+        positions.sort_unstable();
+        positions.dedup();
+        for position in positions {
+            samples.push(
+                read_sample(&mut file, position, SAMPLE_SIZE).map_err(|err| err.to_string())?,
+            );
+        }
+    }
+
+    if let Some(first) = samples.first() {
+        if first.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            return Ok(UTF_8);
+        }
+        if first.starts_with(&[0xFF, 0xFE]) {
+            return Ok(UTF_16LE);
+        }
+        if first.starts_with(&[0xFE, 0xFF]) {
+            return Ok(UTF_16BE);
+        }
+    }
+
+    for label in ENCODING_CANDIDATES {
+        let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
+            .ok_or_else(|| format!("不支持的编码：{label}"))?;
+        let clean = if encoding == UTF_8 {
+            samples.iter().all(|sample| is_clean_utf8_sample(sample))
+        } else {
+            samples
+                .iter()
+                .all(|sample| sample_replacement_ratio(encoding, sample) < 0.02)
+        };
+        if clean {
+            return Ok(encoding);
+        }
+    }
+    Ok(encoding_rs::WINDOWS_1252)
+}
+
 pub fn import_file(
     conn: &Connection,
     source: &Path,
@@ -56,12 +149,7 @@ pub fn import_file(
         return Err("请选择 TXT 文件".to_string());
     }
 
-    let mut header_file = File::open(source).map_err(|err| err.to_string())?;
-    let mut header = vec![0u8; HEADER_SIZE];
-    let header_len = header_file
-        .read(&mut header)
-        .map_err(|err| err.to_string())?;
-    let encoding = detect_encoding(&header[..header_len]);
+    let encoding = detect_encoding_from_file(source)?;
 
     let destination = books_dir.join(format!("{}.txt", Uuid::new_v4()));
     let char_count = copy_and_count_chars(source, &destination, encoding)
@@ -146,6 +234,20 @@ mod tests {
         let bytes = content.as_bytes();
         let truncated = &bytes[..bytes.len() - 1];
         assert_eq!(detect_encoding(truncated), UTF_8);
+    }
+
+    #[test]
+    fn detects_gbk_over_windows_1252_for_chinese_files() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gbk-large.txt");
+        let prefix = "A".repeat(80_000);
+        let content = format!("{prefix}\n第一章 中文内容\n");
+        let encoded = encoding_rs::GBK.encode(&content).0;
+        std::fs::write(&path, encoded).unwrap();
+
+        let detected = detect_encoding_from_file(&path).unwrap();
+        assert_eq!(detected, encoding_rs::GBK);
+        assert_ne!(detected, encoding_rs::WINDOWS_1252);
     }
 
     #[test]
