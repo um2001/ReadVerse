@@ -11,6 +11,7 @@ const DEFAULT_CHUNK_SIZE: usize = 256 * 1024;
 #[derive(Debug, Clone, Serialize)]
 pub struct Page {
     pub text: String,
+    pub start_offset: usize,
     pub next_offset: usize,
     pub eof: bool,
 }
@@ -52,6 +53,7 @@ impl Reader {
         if target_chars == 0 {
             return Ok(Page {
                 text: String::new(),
+                start_offset: start,
                 next_offset: start,
                 eof: self.eof,
             });
@@ -63,16 +65,70 @@ impl Reader {
             let available = self.text.chars().count();
             if available >= target_chars {
                 if let Some(end) = self.last_line_end(target_chars / 2, target_chars) {
-                    return Ok(self.take(end));
+                    return Ok(Page {
+                        start_offset: start,
+                        ..self.take(end)
+                    });
                 }
                 if self.eof || available >= target_chars * 2 {
-                    return Ok(self.take(target_chars));
+                    return Ok(Page {
+                        start_offset: start,
+                        ..self.take(target_chars)
+                    });
                 }
             } else if self.eof {
-                return Ok(self.take(available));
+                return Ok(Page {
+                    start_offset: start,
+                    ..self.take(available)
+                });
             }
             self.read_more()?;
         }
+    }
+
+    pub fn previous_page(&mut self, end_offset: usize, target_chars: usize) -> Result<Page, String> {
+        self.reset()
+            .map_err(|err| format!("无法重读书籍：{err}"))?;
+
+        if end_offset == 0 {
+            return Ok(Page {
+                text: String::new(),
+                start_offset: 0,
+                next_offset: 0,
+                eof: true,
+            });
+        }
+
+        let mut cursor = 0usize;
+        let mut previous = None;
+        while cursor < end_offset {
+            let page = self.read_page(cursor, target_chars)?;
+            if page.next_offset <= cursor {
+                break;
+            }
+            if page.next_offset == end_offset {
+                previous = Some(page);
+                break;
+            }
+            if page.next_offset > end_offset {
+                break;
+            }
+            cursor = page.next_offset;
+            previous = Some(page);
+        }
+
+        Ok(match previous {
+            Some(mut page) => {
+                page.start_offset = page.next_offset.saturating_sub(page.text.chars().count());
+                page
+            }
+            None => Page {
+                text: String::new(),
+                start_offset: 0,
+                next_offset: 0,
+                eof: true,
+            },
+        })
     }
 
     fn advance_to(&mut self, target: usize) -> Result<bool, String> {
@@ -145,6 +201,7 @@ impl Reader {
         self.pos += count;
         Page {
             text: page,
+            start_offset: 0,
             next_offset: self.pos,
             eof: self.eof && self.text.is_empty(),
         }
@@ -251,5 +308,46 @@ mod tests {
         let again = reader.read_page(0, 10).unwrap();
         assert_eq!(again.text, first.text);
         assert_eq!(again.next_offset, first.next_offset);
+    }
+
+    #[test]
+    fn previous_page_restores_earlier_content_from_saved_offset() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("resume.txt");
+        let content = (0..12)
+            .map(|index| format!("这是第{index}页内容\n"))
+            .collect::<String>();
+        write_text(&path, content.as_bytes());
+
+        let mut reader = Reader::open(&path, encoding_rs::UTF_8).unwrap();
+        let first = reader.read_page(0, 50).unwrap();
+        let second = reader.read_page(first.next_offset, 50).unwrap();
+        assert!(second.start_offset > first.start_offset);
+
+        let mut resumed = Reader::open(&path, encoding_rs::UTF_8).unwrap();
+        let previous = resumed.previous_page(second.start_offset, 50).unwrap();
+        assert_eq!(previous.text, first.text);
+        assert_eq!(previous.start_offset, first.start_offset);
+        assert_eq!(previous.next_offset, second.start_offset);
+    }
+
+    #[test]
+    fn previous_page_skips_the_page_that_contains_a_mid_page_offset() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("resume-mid.txt");
+        let content = (0..12)
+            .map(|index| format!("这是第{index}页内容\n"))
+            .collect::<String>();
+        write_text(&path, content.as_bytes());
+
+        let mut reader = Reader::open(&path, encoding_rs::UTF_8).unwrap();
+        let first = reader.read_page(0, 50).unwrap();
+        let second = reader.read_page(first.next_offset, 50).unwrap();
+        let mid_offset = second.start_offset + 5;
+
+        let mut resumed = Reader::open(&path, encoding_rs::UTF_8).unwrap();
+        let previous = resumed.previous_page(mid_offset, 50).unwrap();
+        assert_eq!(previous.text, first.text);
+        assert_eq!(previous.next_offset, second.start_offset);
     }
 }

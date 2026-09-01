@@ -6,7 +6,12 @@ import {
   Plus,
   RotateCcw,
 } from "lucide-react";
-import { getProgress, readPage, saveProgress } from "../lib/api";
+import {
+  getProgress,
+  readPage,
+  readPreviousPage,
+  saveProgress,
+} from "../lib/api";
 import { clamp } from "../lib/format";
 import type { Book, PageResult } from "../types";
 
@@ -43,6 +48,7 @@ export function Reader({ book, onBack }: ReaderProps) {
       const page = cached
         ? {
             text: cached.text,
+            start_offset: offset,
             next_offset: cached.nextOffset,
             eof: cached.eof,
           }
@@ -121,14 +127,36 @@ export function Reader({ book, onBack }: ReaderProps) {
   }, [eof, loadPage, nextOffset, persist, ready]);
 
   const goPrev = useCallback(() => {
-    if (!ready || stackRef.current.length === 0) return;
-    const target = stackRef.current[stackRef.current.length - 1];
-    stackRef.current = stackRef.current.slice(0, -1);
-    setPageStack(stackRef.current);
-    void loadPage(target).then(() =>
-      persist(offsetRef.current, fontSizeRef.current),
-    );
-  }, [loadPage, persist, ready]);
+    if (!ready) return;
+    if (stackRef.current.length > 0) {
+      const target = stackRef.current[stackRef.current.length - 1];
+      stackRef.current = stackRef.current.slice(0, -1);
+      setPageStack(stackRef.current);
+      void loadPage(target).then(() =>
+        persist(offsetRef.current, fontSizeRef.current),
+      );
+      return;
+    }
+    if (offsetRef.current === 0) return;
+
+    void readPreviousPage(book.id, offsetRef.current)
+      .then((page) => {
+        if (page.text.length === 0) return;
+        const start = page.start_offset;
+        cacheRef.current.set(start, {
+          text: page.text,
+          nextOffset: page.next_offset,
+          eof: page.eof,
+        });
+        offsetRef.current = start;
+        setCurrentOffset(start);
+        setNextOffset(page.next_offset);
+        setPageText(page.text);
+        setEof(page.eof);
+        persist(start, fontSizeRef.current);
+      })
+      .catch((err) => setError(String(err)));
+  }, [book.id, loadPage, persist, ready]);
 
   function changeFont(delta: number) {
     const next = clamp(fontSize + delta, 14, 34);
@@ -151,6 +179,7 @@ export function Reader({ book, onBack }: ReaderProps) {
       ? 0
       : clamp(Math.round((currentOffset / book.char_count) * 100), 0, 100);
   const pageNumber = pageStack.length + 1;
+  const canGoPrev = pageStack.length > 0 || currentOffset > 0;
 
   return (
     <div className="flex h-full flex-col bg-[#fbfcfa]">
@@ -227,7 +256,7 @@ export function Reader({ book, onBack }: ReaderProps) {
           <button
             type="button"
             onClick={goPrev}
-            disabled={pageStack.length === 0 || !ready}
+            disabled={!ready || !canGoPrev}
             className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-[#445149] transition hover:bg-[#eef3f0] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden />

@@ -32,3 +32,7 @@ export function saveProgress(
 export function readPage(bookId: number, offset: number) {
   return invoke<PageResult>("read_page", { bookId, offset });
 }
+
+export function readPreviousPage(bookId: number, offset: number) {
+  return invoke<PageResult>("read_previous_page", { bookId, offset });
+}

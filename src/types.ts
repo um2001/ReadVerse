@@ -17,6 +17,7 @@ export interface ReadingProgress {
 
 export interface PageResult {
   text: string;
+  start_offset: number;
   next_offset: number;
   eof: boolean;
 }

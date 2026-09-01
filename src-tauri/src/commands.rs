@@ -89,3 +89,28 @@ pub fn read_page(
     let mut reader = reader.lock().map_err(|err| err.to_string())?;
     reader.read_page(offset, reader::DEFAULT_PAGE_CHARS)
 }
+
+#[tauri::command]
+pub fn read_previous_page(
+    state: State<'_, AppState>,
+    book_id: i64,
+    offset: usize,
+) -> Result<reader::Page, String> {
+    let book = {
+        let conn = state.db.lock().map_err(|err| err.to_string())?;
+        db::book_by_id(&conn, book_id)?
+            .ok_or_else(|| "书籍不存在".to_string())?
+    };
+    let mut readers = state.readers.lock().map_err(|err| err.to_string())?;
+    if !readers.contains_key(&book_id) {
+        let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
+            .unwrap_or(encoding_rs::UTF_8);
+        let reader = Reader::open(Path::new(&book.file_path), encoding)?;
+        readers.insert(book_id, Arc::new(Mutex::new(reader)));
+    }
+    let reader = readers
+        .get(&book_id)
+        .ok_or_else(|| "阅读器初始化失败".to_string())?;
+    let mut reader = reader.lock().map_err(|err| err.to_string())?;
+    reader.previous_page(offset, reader::DEFAULT_PAGE_CHARS)
+}
