@@ -2,11 +2,20 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use rusqlite::Connection;
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
 use crate::db::{self, Book, ReadingProgress};
 use crate::reader::{self, Reader};
 use crate::AppState;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    pub char_offset: usize,
+    pub snippet: String,
+    pub chapter_title: String,
+}
 
 #[tauri::command]
 pub fn list_books(state: State<'_, AppState>) -> Result<Vec<Book>, String> {
@@ -138,4 +147,106 @@ pub fn get_page_number(
         .ok_or_else(|| "阅读器初始化失败".to_string())?;
     let mut reader = reader.lock().map_err(|err| err.to_string())?;
     reader.page_number_at(offset, reader::DEFAULT_PAGE_CHARS)
+}
+
+fn ensure_chapters(conn: &Connection, book: &db::Book) -> Result<(), String> {
+    if !db::list_chapters(conn, book.id)?.is_empty() {
+        return Ok(());
+    }
+    let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
+        .unwrap_or(encoding_rs::UTF_8);
+    let candidates = reader::scan_chapters(Path::new(&book.file_path), encoding)?;
+    let items = candidates
+        .iter()
+        .map(|candidate| (candidate.title.clone(), candidate.char_offset))
+        .collect::<Vec<_>>();
+    db::replace_chapters(conn, book.id, &items)
+}
+
+#[tauri::command]
+pub fn get_chapters(
+    state: State<'_, AppState>,
+    book_id: i64,
+) -> Result<Vec<db::Chapter>, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    let book = db::book_by_id(&conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())?;
+    ensure_chapters(&conn, &book)?;
+    db::list_chapters(&conn, book_id)
+}
+
+#[tauri::command]
+pub fn search_book(
+    state: State<'_, AppState>,
+    book_id: i64,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SearchHit>, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    let book = db::book_by_id(&conn, book_id)?
+        .ok_or_else(|| "书籍不存在".to_string())?;
+    ensure_chapters(&conn, &book)?;
+    let encoding = encoding_rs::Encoding::for_label(book.encoding.as_bytes())
+        .unwrap_or(encoding_rs::UTF_8);
+    let hits = reader::search_file(
+        Path::new(&book.file_path),
+        encoding,
+        &query,
+        limit.unwrap_or(50),
+    )?;
+    let mut results = Vec::with_capacity(hits.len());
+    for hit in hits {
+        let chapter_title = db::chapter_title_at(&conn, book_id, hit.char_offset as i64)?
+            .unwrap_or_default();
+        results.push(SearchHit {
+            char_offset: hit.char_offset,
+            snippet: hit.snippet,
+            chapter_title,
+        });
+    }
+    Ok(results)
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Result<db::Settings, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::get_settings(&conn)
+}
+
+#[tauri::command]
+pub fn save_settings(
+    state: State<'_, AppState>,
+    settings: db::Settings,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::save_settings(&conn, &settings)
+}
+
+#[tauri::command]
+pub fn add_bookmark(
+    state: State<'_, AppState>,
+    book_id: i64,
+    char_offset: usize,
+    excerpt: String,
+) -> Result<db::Bookmark, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    if db::book_by_id(&conn, book_id)?.is_none() {
+        return Err("书籍不存在".to_string());
+    }
+    db::add_bookmark(&conn, book_id, char_offset as i64, &excerpt)
+}
+
+#[tauri::command]
+pub fn list_bookmarks(
+    state: State<'_, AppState>,
+    book_id: i64,
+) -> Result<Vec<db::Bookmark>, String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::list_bookmarks(&conn, book_id)
+}
+
+#[tauri::command]
+pub fn delete_bookmark(state: State<'_, AppState>, bookmark_id: i64) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|err| err.to_string())?;
+    db::delete_bookmark(&conn, bookmark_id)
 }

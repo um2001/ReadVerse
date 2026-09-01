@@ -39,6 +39,13 @@ pub fn run() {
             commands::read_page,
             commands::read_previous_page,
             commands::get_page_number,
+            commands::get_chapters,
+            commands::search_book,
+            commands::get_settings,
+            commands::save_settings,
+            commands::add_bookmark,
+            commands::list_bookmarks,
+            commands::delete_bookmark,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

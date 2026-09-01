@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use encoding_rs::{Decoder, Encoding};
@@ -7,6 +8,21 @@ use serde::Serialize;
 
 pub const DEFAULT_PAGE_CHARS: usize = 900;
 const DEFAULT_CHUNK_SIZE: usize = 256 * 1024;
+const MAX_CHAPTER_TITLE_CHARS: usize = 80;
+const MAX_LINE_BUFFER_CHARS: usize = 64 * 1024;
+const SEARCH_BUFFER_CHARS: usize = 16 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChapterCandidate {
+    pub title: String,
+    pub char_offset: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    pub char_offset: usize,
+    pub snippet: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Page {
@@ -25,6 +41,8 @@ pub struct Reader {
     pos: usize,
     eof: bool,
     chunk_size: usize,
+    page_starts: Vec<usize>,
+    page_index_target: Option<usize>,
 }
 
 impl Reader {
@@ -39,6 +57,8 @@ impl Reader {
             pos: 0,
             eof: false,
             chunk_size: DEFAULT_CHUNK_SIZE,
+            page_starts: Vec::new(),
+            page_index_target: None,
         })
     }
 
@@ -87,9 +107,6 @@ impl Reader {
     }
 
     pub fn previous_page(&mut self, end_offset: usize, target_chars: usize) -> Result<Page, String> {
-        self.reset()
-            .map_err(|err| format!("无法重读书籍：{err}"))?;
-
         if end_offset == 0 {
             return Ok(Page {
                 text: String::new(),
@@ -99,62 +116,30 @@ impl Reader {
             });
         }
 
-        let mut cursor = 0usize;
-        let mut previous = None;
-        while cursor < end_offset {
-            let page = self.read_page(cursor, target_chars)?;
-            if page.next_offset <= cursor {
-                break;
-            }
-            if page.next_offset == end_offset {
-                previous = Some(page);
-                break;
-            }
-            if page.next_offset > end_offset {
-                break;
-            }
-            cursor = page.next_offset;
-            previous = Some(page);
-        }
-
-        Ok(match previous {
-            Some(mut page) => {
-                page.start_offset = page.next_offset.saturating_sub(page.text.chars().count());
-                page
-            }
-            None => Page {
+        self.ensure_page_index(target_chars)?;
+        let containing = self.page_starts.partition_point(|&start| start <= end_offset);
+        if containing < 2 {
+            return Ok(Page {
                 text: String::new(),
                 start_offset: 0,
                 next_offset: 0,
                 eof: true,
-            },
-        })
+            });
+        }
+        let start = self.page_starts[containing - 2];
+        Ok(self.read_page(start, target_chars)?)
     }
 
     pub fn page_number_at(&mut self, offset: usize, target_chars: usize) -> Result<usize, String> {
-        self.reset()
-            .map_err(|err| format!("无法重读书籍：{err}"))?;
         if offset == 0 {
             return Ok(1);
         }
-
-        let mut cursor = 0usize;
-        let mut pages = 0usize;
-        while cursor < offset {
-            let page = self.read_page(cursor, target_chars)?;
-            if page.next_offset <= cursor {
-                break;
-            }
-            if page.next_offset > offset {
-                break;
-            }
-            pages += 1;
-            if page.next_offset == offset {
-                break;
-            }
-            cursor = page.next_offset;
+        self.ensure_page_index(target_chars)?;
+        if self.page_starts.is_empty() {
+            return Ok(1);
         }
-        Ok(pages + 1)
+        let containing = self.page_starts.partition_point(|&start| start <= offset);
+        Ok(containing.clamp(1, self.page_starts.len()))
     }
 
     fn advance_to(&mut self, target: usize) -> Result<bool, String> {
@@ -241,6 +226,268 @@ impl Reader {
         self.eof = false;
         Ok(())
     }
+
+    fn ensure_page_index(&mut self, target_chars: usize) -> Result<(), String> {
+        if self.page_index_target == Some(target_chars) {
+            return Ok(());
+        }
+        self.reset()
+            .map_err(|err| format!("无法重读书籍：{err}"))?;
+        self.page_starts.clear();
+        let mut start = 0usize;
+        loop {
+            let page = self.read_page(start, target_chars)?;
+            if page.text.is_empty() || page.next_offset <= start {
+                break;
+            }
+            self.page_starts.push(start);
+            start = page.next_offset;
+        }
+        self.page_index_target = Some(target_chars);
+        Ok(())
+    }
+}
+
+fn is_chapter_number_char(ch: char) -> bool {
+    ch.is_ascii_digit() || "０１２３４５６７８９零〇一二三四五六七八九十百千万两".contains(ch)
+}
+
+fn is_chapter_title(line: &str) -> bool {
+    let title = line.trim();
+    let char_count = title.chars().count();
+    if char_count == 0 || char_count > MAX_CHAPTER_TITLE_CHARS {
+        return false;
+    }
+
+    if let Some(rest) = title.strip_prefix('第') {
+        let mut seen_number = false;
+        let mut chars = rest.chars().peekable();
+        while let Some(&ch) = chars.peek() {
+            if ch.is_whitespace() || is_chapter_number_char(ch) {
+                seen_number = true;
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if seen_number {
+            if let Some(&ch) = chars.peek() {
+                if "章节回卷部篇集".contains(ch) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    const PREFIXES: &[&str] = &[
+        "序章", "序言", "楔子", "引子", "前言", "后记", "尾声", "番外", "外传", "正文",
+    ];
+    if PREFIXES.iter().any(|prefix| title.starts_with(prefix)) {
+        return true;
+    }
+
+    for marker in ["卷", "部", "篇", "集"] {
+        if let Some(rest) = title.strip_prefix(marker) {
+            if rest
+                .trim_start()
+                .chars()
+                .next()
+                .map(is_chapter_number_char)
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn consume_scan_lines(
+    text: &mut String,
+    offset: &mut usize,
+    chapters: &mut Vec<ChapterCandidate>,
+    seen: &mut HashSet<String>,
+) {
+    loop {
+        let Some(newline) = text.find('\n') else {
+            break;
+        };
+        let raw_line = text[..newline].trim_end_matches('\r');
+        let line = raw_line.trim();
+        if is_chapter_title(line) && seen.insert(line.to_string()) {
+            chapters.push(ChapterCandidate {
+                title: line.to_string(),
+                char_offset: *offset,
+            });
+        }
+        let line_end = newline + 1;
+        *offset += text[..line_end].chars().count();
+        text.drain(..line_end);
+    }
+}
+
+fn char_index_to_byte(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
+}
+
+pub fn scan_chapters(
+    path: &Path,
+    encoding: &'static Encoding,
+) -> Result<Vec<ChapterCandidate>, String> {
+    let file = File::open(path).map_err(|err| format!("无法打开书籍：{err}"))?;
+    let mut reader = BufReader::with_capacity(DEFAULT_CHUNK_SIZE, file);
+    let mut decoder = encoding.new_decoder_with_bom_removal();
+    let mut buffer = vec![0u8; DEFAULT_CHUNK_SIZE];
+    let mut text = String::new();
+    let mut offset = 0usize;
+    let mut chapters = Vec::new();
+    let mut seen = HashSet::new();
+
+    loop {
+        let read = reader.read(&mut buffer).map_err(|err| err.to_string())?;
+        if read == 0 {
+            let mut tail = String::new();
+            let _ = decoder.decode_to_string(b"", &mut tail, true);
+            text.push_str(&tail);
+            consume_scan_lines(&mut text, &mut offset, &mut chapters, &mut seen);
+            break;
+        }
+        let mut decoded = String::with_capacity(read * 2);
+        let _ = decoder.decode_to_string(&buffer[..read], &mut decoded, false);
+        text.push_str(&decoded);
+        consume_scan_lines(&mut text, &mut offset, &mut chapters, &mut seen);
+
+        if !text.contains('\n') && text.chars().count() > MAX_LINE_BUFFER_CHARS {
+            let drop = text.chars().count() - MAX_LINE_BUFFER_CHARS;
+            offset += drop;
+            let drop_bytes = char_index_to_byte(&text, drop);
+            text.drain(..drop_bytes);
+        }
+    }
+    Ok(chapters)
+}
+
+fn make_search_snippet(text: &str, char_index: usize, query_len: usize, offset: usize) -> SearchHit {
+    const CONTEXT: usize = 40;
+    let total = text.chars().count();
+    let start = char_index.saturating_sub(CONTEXT);
+    let end = (char_index + query_len + CONTEXT * 2).min(total);
+    let excerpt = text.chars().skip(start).take(end - start).collect::<String>();
+    let prefix = if start > 0 { "…" } else { "" };
+    let suffix = if end < total { "…" } else { "" };
+    SearchHit {
+        char_offset: offset + char_index,
+        snippet: format!("{prefix}{excerpt}{suffix}"),
+    }
+}
+
+fn collect_search_hits(
+    text: &str,
+    offset: usize,
+    min_start: usize,
+    query: &str,
+    query_len: usize,
+    searched_offset: &mut usize,
+    results: &mut Vec<SearchHit>,
+    limit: usize,
+) {
+    let total = text.chars().count();
+    for (char_index, (byte_index, _)) in text.char_indices().enumerate() {
+        if char_index < min_start {
+            continue;
+        }
+        if char_index + query_len > total {
+            break;
+        }
+        if !text[byte_index..].starts_with(query) {
+            continue;
+        }
+        let global_offset = offset + char_index;
+        if global_offset + query_len <= *searched_offset {
+            continue;
+        }
+        results.push(make_search_snippet(text, char_index, query_len, offset));
+        *searched_offset = global_offset + query_len;
+        if results.len() >= limit {
+            return;
+        }
+    }
+}
+
+pub fn search_file(
+    path: &Path,
+    encoding: &'static Encoding,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchHit>, String> {
+    let query = query.trim();
+    if query.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let query_len = query.chars().count();
+    let file = File::open(path).map_err(|err| format!("无法打开书籍：{err}"))?;
+    let mut reader = BufReader::with_capacity(DEFAULT_CHUNK_SIZE, file);
+    let mut decoder = encoding.new_decoder_with_bom_removal();
+    let mut buffer = vec![0u8; DEFAULT_CHUNK_SIZE];
+    let mut text = String::new();
+    let mut offset = 0usize;
+    let mut searched_offset = 0usize;
+    let mut results = Vec::new();
+
+    loop {
+        let read = reader.read(&mut buffer).map_err(|err| err.to_string())?;
+        if read == 0 {
+            let mut tail = String::new();
+            let _ = decoder.decode_to_string(b"", &mut tail, true);
+            text.push_str(&tail);
+            let min_start = searched_offset
+                .saturating_sub(offset)
+                .saturating_sub(query_len.saturating_sub(1));
+            collect_search_hits(
+                &text,
+                offset,
+                min_start,
+                query,
+                query_len,
+                &mut searched_offset,
+                &mut results,
+                limit,
+            );
+            break;
+        }
+        let mut decoded = String::with_capacity(read * 2);
+        let _ = decoder.decode_to_string(&buffer[..read], &mut decoded, false);
+        text.push_str(&decoded);
+
+        let min_start = searched_offset
+            .saturating_sub(offset)
+            .saturating_sub(query_len.saturating_sub(1));
+        collect_search_hits(
+            &text,
+            offset,
+            min_start,
+            query,
+            query_len,
+            &mut searched_offset,
+            &mut results,
+            limit,
+        );
+        searched_offset = searched_offset.max(offset + text.chars().count());
+
+        if text.chars().count() > SEARCH_BUFFER_CHARS {
+            let drop = text.chars().count() - SEARCH_BUFFER_CHARS;
+            offset += drop;
+            let drop_bytes = char_index_to_byte(&text, drop);
+            text.drain(..drop_bytes);
+        }
+        if results.len() >= limit {
+            break;
+        }
+    }
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -396,5 +643,39 @@ mod tests {
 
         let mid_offset = second.start_offset + 5;
         assert_eq!(resumed.page_number_at(mid_offset, 50).unwrap(), 2);
+    }
+
+    #[test]
+    fn chapter_scan_detects_common_heading_patterns() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("chapters.txt");
+        let content = "楔子\n第一章 相遇\n第一次见她\n卷二 风云\n第 3 章 夜行\n番外 星空\n";
+        write_text(&path, content.as_bytes());
+
+        let chapters = scan_chapters(&path, encoding_rs::UTF_8).unwrap();
+        let titles = chapters
+            .iter()
+            .map(|chapter| chapter.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec!["楔子", "第一章 相遇", "卷二 风云", "第 3 章 夜行", "番外 星空"]
+        );
+        assert_eq!(chapters[0].char_offset, 0);
+        assert!(chapters[1].char_offset > chapters[0].char_offset);
+        assert!(!titles.contains(&"第一次见她"));
+    }
+
+    #[test]
+    fn search_file_returns_matches_across_long_lines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("search.txt");
+        let content = format!("{}风雪继续写下去\n", "测".repeat(20000));
+        write_text(&path, content.as_bytes());
+
+        let hits = search_file(&path, encoding_rs::UTF_8, "风雪", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].char_offset, 20000);
+        assert!(hits[0].snippet.contains("风雪"));
     }
 }

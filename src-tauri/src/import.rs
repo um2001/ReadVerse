@@ -38,6 +38,15 @@ pub fn import_file(
     source: &Path,
     books_dir: &Path,
 ) -> Result<Book, String> {
+    let is_txt = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("txt"))
+        .unwrap_or(false);
+    if !is_txt {
+        return Err("仅支持导入 .txt 文件".to_string());
+    }
+
     let metadata = fs::metadata(source).map_err(|err| format!("无法读取文件：{err}"))?;
     if !metadata.is_file() {
         return Err("请选择 TXT 文件".to_string());
@@ -97,6 +106,10 @@ fn copy_and_count_chars(
         char_count += decoded.chars().count() as u64;
     }
 
+    let mut tail = String::new();
+    let _ = decoder.decode_to_string(b"", &mut tail, true);
+    char_count += tail.chars().count() as u64;
+
     writer.flush()?;
     Ok(char_count)
 }
@@ -132,5 +145,18 @@ mod tests {
         assert_eq!(count, content.chars().count() as u64);
         let copied = fs::read(&dest).unwrap();
         assert_eq!(copied, encoded.as_ref());
+    }
+
+    #[test]
+    fn rejects_non_txt_files() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("book.pdf");
+        std::fs::write(&source, b"%PDF-1.4").unwrap();
+        let books_dir = dir.path().join("books");
+        std::fs::create_dir_all(&books_dir).unwrap();
+        let conn = crate::db::open(&dir.path().join("test.db")).unwrap();
+
+        let err = import_file(&conn, &source, &books_dir).unwrap_err();
+        assert!(err.contains(".txt"));
     }
 }
