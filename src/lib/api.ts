@@ -36,3 +36,7 @@ export function readPage(bookId: number, offset: number) {
 export function readPreviousPage(bookId: number, offset: number) {
   return invoke<PageResult>("read_previous_page", { bookId, offset });
 }
+
+export function getPageNumber(bookId: number, offset: number) {
+  return invoke<number>("get_page_number", { bookId, offset });
+}

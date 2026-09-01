@@ -7,6 +7,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import {
+  getPageNumber,
   getProgress,
   readPage,
   readPreviousPage,
@@ -33,11 +34,13 @@ export function Reader({ book, onBack }: ReaderProps) {
   const [nextOffset, setNextOffset] = useState(0);
   const [eof, setEof] = useState(false);
   const [pageStack, setPageStack] = useState<number[]>([]);
+  const [pageNumber, setPageNumber] = useState(1);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
 
   const offsetRef = useRef(0);
   const fontSizeRef = useRef(18);
+  const pageNumberRef = useRef(1);
   const stackRef = useRef<number[]>([]);
   const cacheRef = useRef(new Map<number, PageCacheEntry>());
   const loadedRef = useRef(false);
@@ -88,7 +91,10 @@ export function Reader({ book, onBack }: ReaderProps) {
         fontSizeRef.current = progress.font_size;
         setFontSize(progress.font_size);
         await loadPage(start);
+        const number = await getPageNumber(book.id, start).catch(() => 1);
         if (!cancelled) {
+          pageNumberRef.current = number;
+          setPageNumber(number);
           loadedRef.current = true;
           setReady(true);
         }
@@ -121,9 +127,11 @@ export function Reader({ book, onBack }: ReaderProps) {
     if (eof || !ready) return;
     stackRef.current = [...stackRef.current, offsetRef.current];
     setPageStack(stackRef.current);
-    void loadPage(nextOffset).then(() =>
-      persist(offsetRef.current, fontSizeRef.current),
-    );
+    void loadPage(nextOffset).then(() => {
+      pageNumberRef.current += 1;
+      setPageNumber(pageNumberRef.current);
+      persist(offsetRef.current, fontSizeRef.current);
+    });
   }, [eof, loadPage, nextOffset, persist, ready]);
 
   const goPrev = useCallback(() => {
@@ -132,9 +140,11 @@ export function Reader({ book, onBack }: ReaderProps) {
       const target = stackRef.current[stackRef.current.length - 1];
       stackRef.current = stackRef.current.slice(0, -1);
       setPageStack(stackRef.current);
-      void loadPage(target).then(() =>
-        persist(offsetRef.current, fontSizeRef.current),
-      );
+      void loadPage(target).then(() => {
+        pageNumberRef.current = Math.max(1, pageNumberRef.current - 1);
+        setPageNumber(pageNumberRef.current);
+        persist(offsetRef.current, fontSizeRef.current);
+      });
       return;
     }
     if (offsetRef.current === 0) return;
@@ -153,6 +163,8 @@ export function Reader({ book, onBack }: ReaderProps) {
         setNextOffset(page.next_offset);
         setPageText(page.text);
         setEof(page.eof);
+        pageNumberRef.current = Math.max(1, pageNumberRef.current - 1);
+        setPageNumber(pageNumberRef.current);
         persist(start, fontSizeRef.current);
       })
       .catch((err) => setError(String(err)));
@@ -178,7 +190,6 @@ export function Reader({ book, onBack }: ReaderProps) {
     book.char_count <= 0
       ? 0
       : clamp(Math.round((currentOffset / book.char_count) * 100), 0, 100);
-  const pageNumber = pageStack.length + 1;
   const canGoPrev = pageStack.length > 0 || currentOffset > 0;
 
   return (
@@ -263,7 +274,7 @@ export function Reader({ book, onBack }: ReaderProps) {
             上一页
           </button>
           <span className="text-xs text-[#7b8580]">
-            第 {pageNumber} 页 · {fontSize}px
+            {`第 ${pageNumber} 页 · ${fontSize}px`}
           </span>
           <button
             type="button"

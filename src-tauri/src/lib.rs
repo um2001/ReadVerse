@@ -38,6 +38,7 @@ pub fn run() {
             commands::save_progress,
             commands::read_page,
             commands::read_previous_page,
+            commands::get_page_number,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

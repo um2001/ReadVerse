@@ -20,6 +20,7 @@ const pages: Record<number, PageResult> = {
 };
 
 vi.mock("../lib/api", () => ({
+  getPageNumber: vi.fn(),
   getProgress: vi.fn(),
   readPage: vi.fn(),
   readPreviousPage: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("../lib/api", () => ({
 }));
 
 import {
+  getPageNumber,
   getProgress,
   readPage,
   readPreviousPage,
@@ -36,6 +38,7 @@ import {
 describe("Reader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getPageNumber).mockResolvedValue(1);
     vi.mocked(getProgress).mockResolvedValue({
       book_id: book.id,
       char_offset: 12,
@@ -79,13 +82,16 @@ describe("Reader", () => {
       font_size: 20,
       updated_at: "2026-09-01 10:00:00",
     });
+    vi.mocked(getPageNumber).mockResolvedValue(2);
     vi.mocked(readPreviousPage).mockResolvedValue(pages[12]);
 
     render(<Reader book={book} onBack={vi.fn()} />);
     expect(await screen.findByText("第二页内容")).toBeInTheDocument();
+    expect(screen.getByText(/第 2 页/)).toBeInTheDocument();
 
     await userEvent.setup().click(screen.getByRole("button", { name: /上一页/ }));
     expect(await screen.findByText("第一页内容")).toBeInTheDocument();
+    expect(screen.getByText(/第 1 页/)).toBeInTheDocument();
     expect(readPreviousPage).toHaveBeenCalledWith(book.id, 40);
 
     await waitFor(() =>

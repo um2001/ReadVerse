@@ -131,6 +131,32 @@ impl Reader {
         })
     }
 
+    pub fn page_number_at(&mut self, offset: usize, target_chars: usize) -> Result<usize, String> {
+        self.reset()
+            .map_err(|err| format!("无法重读书籍：{err}"))?;
+        if offset == 0 {
+            return Ok(1);
+        }
+
+        let mut cursor = 0usize;
+        let mut pages = 0usize;
+        while cursor < offset {
+            let page = self.read_page(cursor, target_chars)?;
+            if page.next_offset <= cursor {
+                break;
+            }
+            if page.next_offset > offset {
+                break;
+            }
+            pages += 1;
+            if page.next_offset == offset {
+                break;
+            }
+            cursor = page.next_offset;
+        }
+        Ok(pages + 1)
+    }
+
     fn advance_to(&mut self, target: usize) -> Result<bool, String> {
         if target < self.pos {
             self.reset()
@@ -349,5 +375,26 @@ mod tests {
         let previous = resumed.previous_page(mid_offset, 50).unwrap();
         assert_eq!(previous.text, first.text);
         assert_eq!(previous.next_offset, second.start_offset);
+    }
+
+    #[test]
+    fn page_number_matches_forward_pagination() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("page-number.txt");
+        let content = (0..12)
+            .map(|index| format!("这是第{index}页内容\n"))
+            .collect::<String>();
+        write_text(&path, content.as_bytes());
+
+        let mut reader = Reader::open(&path, encoding_rs::UTF_8).unwrap();
+        let first = reader.read_page(0, 50).unwrap();
+        let second = reader.read_page(first.next_offset, 50).unwrap();
+
+        let mut resumed = Reader::open(&path, encoding_rs::UTF_8).unwrap();
+        assert_eq!(resumed.page_number_at(0, 50).unwrap(), 1);
+        assert_eq!(resumed.page_number_at(second.start_offset, 50).unwrap(), 2);
+
+        let mid_offset = second.start_offset + 5;
+        assert_eq!(resumed.page_number_at(mid_offset, 50).unwrap(), 2);
     }
 }
