@@ -84,6 +84,8 @@ pub fn import_epub(
     }
     fs::write(&text_path, content.as_bytes())
         .map_err(|err| format!("写入 EPUB 正文失败：{err}"))?;
+    let original_path = book_dir.join("original.epub");
+    fs::copy(source, &original_path).map_err(|err| format!("保存 EPUB 原文件失败：{err}"))?;
 
     let cover_path = match opf.cover_id.as_ref().and_then(|id| opf.manifest.get(id)) {
         Some(item) => {
@@ -528,6 +530,13 @@ mod tests {
 
         assert_eq!(book.format, "epub");
         assert!(!book.cover_path.is_empty());
+        assert!(
+            Path::new(&book.file_path)
+                .parent()
+                .unwrap()
+                .join("original.epub")
+                .is_file()
+        );
         let text = std::fs::read_to_string(&book.file_path).unwrap();
         assert!(text.contains("你好世界"));
         assert!(text.contains("再见世界"));

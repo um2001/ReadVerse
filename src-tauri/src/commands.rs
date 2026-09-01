@@ -123,10 +123,19 @@ pub fn export_book(
     if book.missing {
         return Err("书籍文件缺失，无法导出".to_string());
     }
-    crate::import::export_file(
-        Path::new(&book.file_path),
-        Path::new(&destination_path),
-    )?;
+    let source_path = if book.format == "epub" {
+        let fallback = Path::new(&book.file_path);
+        fallback
+            .parent()
+            .unwrap_or(fallback)
+            .join("original.epub")
+    } else {
+        Path::new(&book.file_path).to_path_buf()
+    };
+    if !source_path.is_file() {
+        return Err("书籍原文件缺失，无法导出".to_string());
+    }
+    crate::import::export_file(&source_path, Path::new(&destination_path))?;
     Ok(destination_path)
 }
 

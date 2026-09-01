@@ -162,7 +162,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_book_offset
 - 搜索：按解码流逐行扫描当前书籍，返回字符偏移、摘要和所属章节；新增 `search_book`
 - 书签：新增 `add_bookmark`、`list_bookmarks`、`delete_bookmark`
 - 设置：新增 `get_settings`、`save_settings`
-- 导出：新增 `export_book`，将应用数据目录中的书籍复制到用户选择的目标路径
+- 导出：新增 `export_book`，将应用数据目录中的原文件按 TXT / EPUB 格式复制到用户选择的目标路径
 - 封面：新增 `get_cover`，以 base64 data URL 返回 EPUB 封面
 - EPUB：新增 `epub` 模块，负责解压、解析 OPF/spine/章节和封面，并将正文归一为纯文本
 - 书架状态：新增 `set_favorite`、`set_read`、`rename_book`，只更新本地元数据

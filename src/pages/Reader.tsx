@@ -355,9 +355,15 @@ export function Reader({ book, settings, onSettingsChange, onBack }: ReaderProps
 
   async function handleExport() {
     try {
+      const isEpub = book.format === "epub";
       const destination = await save({
-        defaultPath: `${book.title}.txt`,
-        filters: [{ name: "TXT 电子书", extensions: ["txt"] }],
+        defaultPath: `${book.title}.${isEpub ? "epub" : "txt"}`,
+        filters: [
+          {
+            name: isEpub ? "EPUB 电子书" : "TXT 电子书",
+            extensions: [isEpub ? "epub" : "txt"],
+          },
+        ],
       });
       if (typeof destination !== "string") return;
       await exportBook(book.id, destination);
